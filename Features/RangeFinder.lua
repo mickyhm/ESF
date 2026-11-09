@@ -315,7 +315,7 @@ local function Register(kind, label)
         local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
         btn:SetSize(240, 22)
         local spell = ESFDB[dbKey .. "Spell"]
-        btn:SetText(spell and spell.name or "Choose ability...")
+        btn:SetText(spell and spell.name or "Choose Ability...")
         btn:SetEnabled(ESFDB[dbKey] and true or false)
         btn:SetScript("OnClick", function(self)
             GetPicker(panel):Open(self, function(chosen)
@@ -335,18 +335,28 @@ local function Register(kind, label)
     end, extra)
 end
 
-Register("Hostile", "Hostile target ability (dot shows when out of range)")
-Register("Friendly", "Friendly target ability (dot shows when out of range)")
+Register("Hostile", "Hostile Target Ability (Dot shows when out of range)")
+Register("Friendly", "Friendly Target Ability (Dot shows when out of range)")
 
 -- Slider for the dot radius, placed under the unlock checkbox.
 local function SizeSlider(cb, panel)
     local box = CreateFrame("Frame", nil, panel)
-    box:SetSize(320, 24)
+    box:SetSize(320, 56)
+
+    local reset = CreateFrame("Button", nil, box, "UIPanelButtonTemplate")
+    reset:SetSize(240, 22)
+    reset:SetPoint("TOPLEFT", 0, 0)
+    reset:SetText("Reset Position and Size")
+    reset:SetScript("OnClick", function()
+        ESFDB.rangeDotPos = nil
+        ESFDB.rangeDotRadius = nil
+        ReloadUI()
+    end)
 
     local s = CreateFrame("Slider", nil, box)
     s:SetOrientation("HORIZONTAL")
     s:SetSize(180, 16)
-    s:SetPoint("LEFT", 0, 0)
+    s:SetPoint("LEFT", box, "BOTTOMLEFT", 0, 12)
     s:SetMinMaxValues(RADIUS_MIN, RADIUS_MAX)
     s:SetValueStep(1)
     if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
@@ -363,17 +373,17 @@ local function SizeSlider(cb, panel)
     text:SetPoint("LEFT", s, "RIGHT", 12, 0)
 
     s:SetValue(Radius())
-    text:SetText("Dot radius: " .. Radius() .. " px")
+    text:SetText("Dot Radius: " .. Radius() .. " px")
     s:SetScript("OnValueChanged", function(_, v)
         v = math.floor(v + 0.5)
         ESFDB.rangeDotRadius = v
-        text:SetText("Dot radius: " .. v .. " px")
+        text:SetText("Dot Radius: " .. v .. " px")
         ApplySize()
     end)
     return box
 end
 
-ESF:RegisterFeature("Range Finder", "rangeUnlock", "Unlock dot (drag to move it)", false, function(on)
+ESF:RegisterFeature("Range Finder", "rangeUnlock", "Unlock Dot (Drag to move it)", false, function(on)
     unlocked = on
     dot:EnableMouse(on)
     Refresh()

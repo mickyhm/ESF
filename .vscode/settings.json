@@ -30,6 +30,7 @@
         "SLASH_ESF1",
         "PlayerFrame",
         "TargetFrame",
-        "UISpecialFrames"
+        "UISpecialFrames",
+        "ReloadUI"
     ]
 }

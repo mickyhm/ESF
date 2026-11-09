@@ -89,12 +89,12 @@ ev:SetScript("OnEvent", function()
     for name in pairs(groups) do RefreshGroup(name) end
 end)
 
-ESF:RegisterFeature("Status Text", "statusTextPlayer", "Current value only (player frame)", true, function(on)
+ESF:RegisterFeature("Status Text", "statusTextPlayer", "Current Value Only (Player Frame)", true, function(on)
     enabled.player = on
     RefreshGroup("player")
 end)
 
-ESF:RegisterFeature("Status Text", "statusTextTarget", "Current value only (target frame)", true, function(on)
+ESF:RegisterFeature("Status Text", "statusTextTarget", "Current Value Only (Target Frame)", true, function(on)
     enabled.target = on
     RefreshGroup("target")
 end)
