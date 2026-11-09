@@ -2,4 +2,7 @@
 ## Title: ExtraSausage
 ## Notes: Small personal tweaks
 ## SavedVariables: ESFDB
+
 Main.lua
+Features\StatusText.lua
+Features\RangeFinder.lua
