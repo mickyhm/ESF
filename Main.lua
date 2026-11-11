@@ -50,12 +50,23 @@ local function BuildPanel()
     local panel = CreateFrame("Frame")
     panel.name = "ExtraSausage"
 
+    -- header: icon, title, version (icon and version come from the .toc)
+    local GetMeta = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+    local icon = panel:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(24, 24)
+    icon:SetPoint("TOPLEFT", 16, -12)
+    icon:SetTexture(GetMeta(ADDON, "IconTexture") or "Interface\\Icons\\INV_Misc_Food_66")
+
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetPoint("LEFT", icon, "RIGHT", 6, 0)
     title:SetText("ExtraSausage")
 
+    local version = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    version:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 6, 1)
+    version:SetText("v" .. (GetMeta(ADDON, "Version") or "?"))
+
     -- prev = last placed widget, prevX = its left offset relative to the column
-    local prev, prevX = title, 0
+    local prev, prevX = icon, 0
     local function Place(widget, x, gap)
         widget:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", x - prevX, -gap)
         prev, prevX = widget, x
@@ -64,7 +75,7 @@ local function BuildPanel()
     for _, s in ipairs(ESF.sections) do
         local caption = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
         caption:SetText(s.name)
-        Place(caption, 0, (prev == title) and 16 or 24)
+        Place(caption, 0, (prev == icon) and 16 or 24)
         if s.note then
             local note = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
             note:SetPoint("BOTTOMLEFT", caption, "BOTTOMRIGHT", 8, 1)

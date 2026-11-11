@@ -1,6 +1,8 @@
 ## Interface: 16001
 ## Title: ExtraSausage
 ## Notes: Small personal tweaks
+## Version: 0.3.0
+## IconTexture: Interface\Icons\INV_Misc_Food_66
 ## SavedVariables: ESFDB
 ## SavedVariablesPerCharacter: ESFCharDB
 
