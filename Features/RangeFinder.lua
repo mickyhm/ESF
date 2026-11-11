@@ -4,7 +4,7 @@ local ADDON, ESF = ...
 -- Default dot position relative to the target frame (used until the dot is moved).
 local DOT_GAP_ABOVE = -20
 local DOT_TEXTURE = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Dot.tga"
-local RADIUS_DEFAULT, RADIUS_MIN, RADIUS_MAX = 6, 2, 14
+local RADIUS_DEFAULT, RADIUS_MIN, RADIUS_MAX = 4, 2, 14
 
 local enabled = { Hostile = false, Friendly = false }
 local unlocked = false
@@ -102,6 +102,24 @@ local function TargetHealthBar()
     return type(obj) == "table" and obj or nil
 end
 
+-- Horizontal offset of the health bar's center from the frame's center (portrait ignored).
+-- Measured once; nil until a measurement succeeds. The bar's position can be a secret
+-- value (no arithmetic allowed), so the math runs in pcall and failures are retried later.
+local barDx
+
+local function MeasureBarDx()
+    if barDx then return end
+    local bar = TargetHealthBar()
+    if not bar then return end
+    local ok, dx = pcall(function()
+        local bx, tx = bar:GetCenter(), TargetFrame:GetCenter()
+        if bx and tx then
+            return bx * bar:GetEffectiveScale() / TargetFrame:GetEffectiveScale() - tx
+        end
+    end)
+    if ok and dx then barDx = dx end
+end
+
 local function ApplyPosition()
     local pos = ESFDB and ESFDB.rangeDotPos
     dot:ClearAllPoints()
@@ -109,16 +127,8 @@ local function ApplyPosition()
         dot:SetPoint("CENTER", TargetFrame, "CENTER", pos.x, pos.y)
         return
     end
-    -- Horizontal offset of the health bar's center from the frame's center (portrait ignored).
-    local dx = 0
-    local bar = TargetHealthBar()
-    if bar then
-        local bx, tx = bar:GetCenter(), TargetFrame:GetCenter()
-        if bx and tx then
-            dx = bx * bar:GetEffectiveScale() / TargetFrame:GetEffectiveScale() - tx
-        end
-    end
-    dot:SetPoint("BOTTOM", TargetFrame, "TOP", dx, DOT_GAP_ABOVE)
+    MeasureBarDx()
+    dot:SetPoint("BOTTOM", TargetFrame, "TOP", barDx or 0, DOT_GAP_ABOVE)
 end
 
 dot:SetScript("OnDragStart", function(self)
@@ -155,7 +165,7 @@ local function IsOutOfRange(spellName)
 end
 
 local function Update()
-    if not ESFDB then return end
+    if not ESFCharDB then return end
     if unlocked then dot:Show() return end   -- always visible while positioning
 
     local out = false
@@ -166,7 +176,7 @@ local function Update()
         elseif UnitCanAssist("player", "target") then
             kind = "Friendly"
         end
-        local spell = kind and enabled[kind] and ESFDB["range" .. kind .. "Spell"]
+        local spell = kind and enabled[kind] and ESFCharDB["range" .. kind .. "Spell"]
         if spell and spell.name then out = IsOutOfRange(spell.name) end
     end
     dot:SetShown(out)
@@ -193,8 +203,9 @@ driver:RegisterEvent("PLAYER_ENTERING_WORLD")
 driver:RegisterEvent("PLAYER_TARGET_CHANGED")
 driver:RegisterEvent("SPELLS_CHANGED")
 driver:SetScript("OnEvent", function(_, event)
+    -- Re-anchor on target change only while the default offset is still unmeasured.
     if event == "PLAYER_ENTERING_WORLD"
-        or (event == "PLAYER_TARGET_CHANGED" and not (ESFDB and ESFDB.rangeDotPos)) then
+        or (event == "PLAYER_TARGET_CHANGED" and not barDx and not (ESFDB and ESFDB.rangeDotPos)) then
         ApplyPosition()
     end
     Refresh()
@@ -314,12 +325,12 @@ local function Register(kind, label)
     local function extra(cb, panel)
         local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
         btn:SetSize(240, 22)
-        local spell = ESFDB[dbKey .. "Spell"]
+        local spell = ESFCharDB[dbKey .. "Spell"]
         btn:SetText(spell and spell.name or "Choose Ability...")
-        btn:SetEnabled(ESFDB[dbKey] and true or false)
+        btn:SetEnabled(ESFCharDB[dbKey] and true or false)
         btn:SetScript("OnClick", function(self)
             GetPicker(panel):Open(self, function(chosen)
-                ESFDB[dbKey .. "Spell"] = chosen
+                ESFCharDB[dbKey .. "Spell"] = chosen
                 self:SetText(chosen.name)
                 Refresh()
             end)
@@ -328,13 +339,15 @@ local function Register(kind, label)
         return btn
     end
 
-    ESF:RegisterFeature("Range Finder", dbKey, label, false, function(on)
+    local f = ESF:RegisterFeature("Range Finder", dbKey, label, false, function(on)
         enabled[kind] = on
         if buttons[kind] then buttons[kind]:SetEnabled(on) end
         Refresh()
     end, extra)
+    f.perChar = true
 end
 
+ESF:SetSectionNote("Range Finder", "(Abilities are character specific)")
 Register("Hostile", "Hostile Target Ability (Dot shows when out of range)")
 Register("Friendly", "Friendly Target Ability (Dot shows when out of range)")
 
@@ -383,7 +396,7 @@ local function SizeSlider(cb, panel)
     return box
 end
 
-ESF:RegisterFeature("Range Finder", "rangeUnlock", "Unlock Dot (Drag to move it)", false, function(on)
+ESF:RegisterFeature("Range Finder", "rangeUnlock", "Test and Unlock (Drag to move it)", false, function(on)
     unlocked = on
     dot:EnableMouse(on)
     Refresh()

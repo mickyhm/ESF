@@ -31,6 +31,12 @@
         "PlayerFrame",
         "TargetFrame",
         "UISpecialFrames",
-        "ReloadUI"
+        "ReloadUI",
+        "NUM_CHAT_WINDOWS",
+        "FCF_StartAlertFlash",
+        "ChatFrame1EditBox",
+        "ChatFrame1",
+        "GeneralDockManager",
+        "ChatFrame1ButtonFrame"
     ]
 }

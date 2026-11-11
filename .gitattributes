@@ -1,0 +1,2 @@
+# Store text files with LF in the repo; checkout uses the platform default (CRLF on Windows).
+* text=auto

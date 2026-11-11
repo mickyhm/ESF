@@ -11,21 +11,42 @@ local function Get(root, ...)
     return obj
 end
 
--- Only these bars are affected. Add more frames/groups here later.
-local groups = {
-    player = {
-        Get(PlayerFrame, "PlayerFrameContent", "PlayerFrameContentMain", "HealthBarsContainer", "HealthBar"),
-        Get(PlayerFrame, "PlayerFrameContent", "PlayerFrameContentMain", "ManaBarArea", "ManaBar"),
-    },
-    target = {
-        Get(TargetFrame, "TargetFrameContent", "TargetFrameContentMain", "HealthBarsContainer", "HealthBar"),
-        Get(TargetFrame, "TargetFrameContent", "TargetFrameContentMain", "ManaBar"),
-    },
-}
+-- Bars per group. Missing frames (different client layouts) are skipped.
+local groups = { player = {}, target = {}, pet = {}, party = {} }
 
-local enabled = { player = false, target = false }
+local function Add(name, bar)
+    if type(bar) == "table" and bar.GetValue then table.insert(groups[name], bar) end
+end
+
+Add("player", Get(PlayerFrame, "PlayerFrameContent", "PlayerFrameContentMain", "HealthBarsContainer", "HealthBar"))
+Add("player", Get(PlayerFrame, "PlayerFrameContent", "PlayerFrameContentMain", "ManaBarArea", "ManaBar"))
+Add("target", Get(TargetFrame, "TargetFrameContent", "TargetFrameContentMain", "HealthBarsContainer", "HealthBar"))
+Add("target", Get(TargetFrame, "TargetFrameContent", "TargetFrameContentMain", "ManaBar"))
+Add("pet", PetFrameHealthBar or Get(PetFrame, "healthbar"))
+Add("pet", PetFrameManaBar or Get(PetFrame, "manabar"))
+
+-- Party frames (raid-style ones have Blizzard's own "Health Remaining" option): new layout first, old globals as fallback.
+for i = 1, 4 do
+    local m = Get(PartyFrame, "MemberFrame" .. i)
+    if m then
+        Add("party", Get(m, "HealthBarContainer", "HealthBar") or m.HealthBar)
+        Add("party", m.ManaBar)
+    else
+        Add("party", _G["PartyMemberFrame" .. i .. "HealthBar"])
+        Add("party", _G["PartyMemberFrame" .. i .. "ManaBar"])
+    end
+end
+
+local enabled = { player = false, target = false, pet = false, party = false }
 local texts = {}    -- bar -> our FontString
-local groupOf = {}  -- bar -> "player" / "target"
+local groupOf = {}  -- bar -> group name
+
+-- Values can be secret on this client: formatting (Lua math) then fails,
+-- but a secret value can still be displayed as is.
+local function SetValueText(fs, v)
+    if pcall(function() fs:SetText(BreakUpLargeNumbers(v)) end) then return true end
+    return pcall(fs.SetText, fs, v)
+end
 
 -- Blizzard's own text objects on a bar (center text, and left/right used for percent/both)
 local function SetBlizzAlpha(bar, a)
@@ -42,9 +63,7 @@ local function Refresh(bar)
         SetBlizzAlpha(bar, 1)
         return
     end
-    -- pcall: GetValue may return a restricted value on this client
-    local ok = pcall(function() fs:SetText(BreakUpLargeNumbers(bar:GetValue())) end)
-    if ok then
+    if SetValueText(fs, bar:GetValue()) then
         fs:Show()
         SetBlizzAlpha(bar, 0)
     else
@@ -85,16 +104,22 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("UNIT_DISPLAYPOWER")
+ev:RegisterEvent("UNIT_PET")
+ev:RegisterEvent("GROUP_ROSTER_UPDATE")
 ev:SetScript("OnEvent", function()
-    for name in pairs(groups) do RefreshGroup(name) end
+    for name in pairs(groups) do
+        for _, bar in ipairs(groups[name]) do Refresh(bar) end
+    end
 end)
 
-ESF:RegisterFeature("Status Text", "statusTextPlayer", "Current Value Only (Player Frame)", true, function(on)
-    enabled.player = on
-    RefreshGroup("player")
-end)
+local function Register(name, key, label)
+    ESF:RegisterFeature("Status Text", key, label, true, function(on)
+        enabled[name] = on
+        RefreshGroup(name)
+    end)
+end
 
-ESF:RegisterFeature("Status Text", "statusTextTarget", "Current Value Only (Target Frame)", true, function(on)
-    enabled.target = on
-    RefreshGroup("target")
-end)
+Register("player", "statusTextPlayer", "Current Value Only (Player Frame)")
+Register("target", "statusTextTarget", "Current Value Only (Target Frame)")
+Register("pet", "statusTextPet", "Current Value Only (Pet Frame)")
+Register("party", "statusTextParty", "Current Value Only (Party Frames)")

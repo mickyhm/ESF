@@ -2,7 +2,9 @@
 ## Title: ExtraSausage
 ## Notes: Small personal tweaks
 ## SavedVariables: ESFDB
+## SavedVariablesPerCharacter: ESFCharDB
 
 Main.lua
 Features\StatusText.lua
 Features\RangeFinder.lua
+Features\ChatAutoHide.lua
