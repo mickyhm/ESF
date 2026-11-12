@@ -1,39 +1,73 @@
--- Features\ChatAutoHide.lua
--- Fades the whole chat (window, tabs, buttons) to invisible.
+-- Features\ChatAutoHide.lua  ("Hide Chat" in the settings)
+-- Fades the whole chat (window, tabs, buttons) to invisible, manually (hide button) or after a timer.
 -- Works with Chattynator (if loaded) or the native Blizzard chat.
 local ADDON, ESF = ...
 
-local MODES = {
-    "Never Hide",
-    "Hide When Idle (Shows on mouse over, blinking or new message)",
-    "Hide After Timer (Shows on mouse over or blinking)",
-    "Hide After Timer (Shows on mouse over only)",
-}
+local HIDE_MANUAL, HIDE_TIMER = 1, 2
+local WAKE_ALL, WAKE_BLINK, WAKE_MOUSE = 1, 2, 3   -- mouse over + blinking + messages / + blinking / only
 local DEFAULT_SECONDS, MAX_SECONDS = 60, 3600
 local FADE_IN, FADE_OUT = 0.15, 0.6      -- seconds
 local SCAN_INTERVAL = 1                  -- Chattynator window scan
 
-local mode = 1
 local units = {}     -- key -> unit (one per chat window / native dock)
 local hooked = {}    -- objects we already hooked
 local useChattynator = false
-local ui             -- settings widgets, once built
 
 local function Seconds()
     return (ESFDB and ESFDB.chatHideSeconds) or DEFAULT_SECONDS
 end
+
+local function Enabled() return ESFDB and ESFDB.chatHide end
+local function TimerMode() return ESFDB and ESFDB.chatHideMode == HIDE_TIMER end
+local function Wake() return (ESFDB and ESFDB.chatWake) or WAKE_ALL end
 
 ----------------------------------------------------------------------
 -- Units: frames to fade + a mouse-over test + last-activity time
 ----------------------------------------------------------------------
 local applying = false   -- true while we set alpha ourselves (see the SetAlpha hook in ScanNative)
 
+-- Typing wakes the chat unless "Show Chat While Typing" is off.
+local function TypingWakes()
+    return ESFDB.chatShowWhileTyping ~= false
+end
+
+local function ActiveEditBox()
+    return ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
+end
+
+-- Fade for one frame of a unit. With typing not waking the chat, the edit box you are
+-- typing in stays fully visible on its own.
+local function FadeOf(u, f)
+    if not TypingWakes() and f == ActiveEditBox() then return 1 end
+    return u.alpha
+end
+
 local function Apply(u)
     applying = true
     for _, f in ipairs(u.frames) do
-        f:SetAlpha(u.alpha * u.base[f])
+        f:SetAlpha(FadeOf(u, f) * u.base[f])
     end
     applying = false
+end
+
+-- Frames whose alpha Blizzard also changes itself: its value becomes the base,
+-- our fade is applied on top (owner = the unit fading the frame).
+local owner = {}
+local alphaHooked = {}
+
+local function HookAlpha(f)
+    if alphaHooked[f] then return end
+    alphaHooked[f] = true
+    -- Blizzard sets alpha on some of these itself (e.g. the edit box dims when inactive):
+    -- take its value as the new base and keep our fade on top.
+    hooksecurefunc(f, "SetAlpha", function(self, a)
+        local un = owner[self]
+        if applying or not un then return end
+        un.base[self] = a
+        applying = true
+        self:SetAlpha(a * FadeOf(un, self))
+        applying = false
+    end)
 end
 
 local function NewUnit(frames, over, editbox)
@@ -50,6 +84,9 @@ local function RemoveUnit(key)
     if not u then return end
     u.alpha = 1
     Apply(u)
+    for _, f in ipairs(u.frames) do
+        if owner[f] == u then owner[f] = nil end
+    end
     units[key] = nil
 end
 
@@ -67,6 +104,7 @@ end
 local function Reset(u, reason)
     local now = GetTime()
     u.last = now
+    u.manual = nil   -- anything that wakes the chat ends a hide by the button
     if debug and (reason ~= lastReason or now - lastPrint >= 1) then
         lastReason, lastPrint = reason, now
         Print("ESF chat timer reset: " .. reason)
@@ -77,25 +115,108 @@ end
 local function Poke(u, kind)
     if not u or ownPrint then return end
     if kind == "message" then
-        if mode == 2 then Reset(u, "new message") end
+        if Wake() == WAKE_ALL then Reset(u, "new message") end
     elseif kind == "blink" then
-        if mode == 2 or mode == 3 then Reset(u, "tab blinking") end
+        if Wake() <= WAKE_BLINK then Reset(u, "tab blinking") end
     end
 end
 
+-- Hide button (built at login): hovering it never counts as mouse over the chat.
+-- After a click, mouse over only works again once the mouse has left the chat (armed).
+local hideButtons = {}   -- key -> button ("main", or the chat window it sits on)
+local armed = true
+
+local function HideButtonOver()
+    for _, b in pairs(hideButtons) do
+        if b:IsShown() and b:IsMouseOver() then return true end
+    end
+    return false
+end
+
+-- The frame the mouse is really on (topmost mouse-enabled frame); nil or WorldFrame if none.
+local function MouseFocus()
+    if GetMouseFoci then return (GetMouseFoci())[1] end
+    return GetMouseFocus and GetMouseFocus()
+end
+
+local function IsChatFrame(f)
+    return units[f] or owner[f] or f.esfHideButton
+        or f == _G.ChattynatorHyperlinkHandler or f == GeneralDockManager
+end
+
+-- False when another window lies on top of the chat under the mouse (character panel, bags,
+-- ...): being inside the chat's rectangle alone does not count then.
+local function MouseOnChat()
+    local f = MouseFocus()
+    if not f or f == WorldFrame then return true end
+    if f.IsForbidden and f:IsForbidden() then return false end
+    while f and f ~= UIParent do
+        if IsChatFrame(f) then return true end
+        f = f:GetParent()
+    end
+    return false
+end
+
+local function MouseOver(u)
+    local over = u.over()
+    if over == "typing" then return over end
+    if HideButtonOver() then return false end
+    if over and not MouseOnChat() then return false end
+    return armed and over
+end
+
+local lastActiveEditBox
+
+-- Chattynator: the shared input box isn't part of any window and gets dimmed (alpha < 1)
+-- by Blizzard/Chattynator. While typing with the chat kept hidden there is no dark window
+-- behind it, so keep it fully opaque then.
+local function KeepInputOpaque(box)
+    if useChattynator and box and box == ActiveEditBox() and not TypingWakes() and box:GetAlpha() < 1 then
+        applying = true
+        box:SetAlpha(1)
+        applying = false
+    end
+end
+
+local inputHooked = false
+local function HookInputBox()
+    if inputHooked or not ChatFrame1EditBox then return end
+    inputHooked = true
+    hooksecurefunc(ChatFrame1EditBox, "SetAlpha", function(self)
+        if not applying then KeepInputOpaque(self) end
+    end)
+end
+
 local function Tick(dt)
+    local active = ActiveEditBox()
+    if active ~= lastActiveEditBox then
+        lastActiveEditBox = active
+        for _, u in pairs(units) do Apply(u) end
+        KeepInputOpaque(active)
+        if debug and active then
+            C_Timer.After(0.2, function()   -- after Blizzard/Chattynator finished showing it
+                Print(("ESF chat: input box alpha %.2f, effective %.2f"):format(
+                    active:GetAlpha(), active:GetEffectiveAlpha()))
+            end)
+        end
+    end
     local now = GetTime()
     local secs = Seconds()
+    local paused = ESFDB.chatHideNoInstance and IsInInstance()
+    local anyOver = HideButtonOver()
     for _, u in pairs(units) do
         local target = 1
-        if mode ~= 1 then
-            local over = u.over()
+        if not armed and u.over() then anyOver = true end
+        if u.manual or (Enabled() and TimerMode() and not paused) then
+            local over = MouseOver(u)
             if over then
                 Reset(u, type(over) == "string" and over or "mouse over")
-            elseif u.editbox and u.editbox:IsShown() then
+            elseif u.editbox and u.editbox:IsShown() and TypingWakes() then
                 Reset(u, "edit box shown")
             end
-            if now - u.last >= secs then target = 0 end
+            if u.manual or now - u.last >= secs then target = 0 end
+        else
+            u.last = now   -- paused in an instance: timer starts fresh afterwards
         end
         local a = u.alpha
         if a ~= target then
@@ -108,6 +229,7 @@ local function Tick(dt)
             Apply(u)
         end
     end
+    if not armed and not anyOver then armed = true end
 end
 
 ----------------------------------------------------------------------
@@ -162,6 +284,10 @@ local function AddChattynator(f)
     end, f:GetID() == 1 and ChatFrame1EditBox or nil)
     u.frame = f
     units[f] = u
+    -- Chattynator changes the window alpha itself (its own fade option): take its value as
+    -- the base and keep our fade on top instead of fighting over it.
+    owner[f] = u
+    HookAlpha(f)
 
     if not hooked[f] then
         hooked[f] = true
@@ -194,6 +320,44 @@ local function AddChattynator(f)
     HookTabs(u)
 end
 
+----------------------------------------------------------------------
+-- TEMPORARY WORKAROUND for a Chattynator bug (Blizzard skin), remove once Chattynator fixes it.
+-- Each window's skin background is CreateFrame("Frame", nil, window, "FloatingBorderedFrame").
+-- Without a frame name, the template's textures all get the same global names
+-- (ChattynatorHyperlinkHandlerTopRightTexture, ...), and their anchors ($parentBackground,
+-- corner textures) resolve to the FIRST window's textures. So every extra window draws its
+-- border around the main window instead of around itself.
+-- Fix: re-anchor each window's border textures to that window's own textures (same name).
+-- To revert: delete this function and the FixChattynatorBorder(f) call in ScanChattynator.
+----------------------------------------------------------------------
+local borderFixed = {}
+
+local function FixChattynatorBorder(f)
+    local bg = f.background
+    if not bg or borderFixed[bg] or not bg.GetRegions then return end
+    borderFixed[bg] = true
+    local own = {}   -- texture name -> this window's texture with that name
+    for _, r in ipairs({ bg:GetRegions() }) do
+        local name = r:GetName()
+        if name then own[name] = r end
+    end
+    for _, r in ipairs({ bg:GetRegions() }) do
+        local points, wrong = {}, false
+        for i = 1, r:GetNumPoints() do
+            local point, rel, relPoint, x, y = r:GetPoint(i)
+            local relName = rel and rel.GetName and rel:GetName()
+            if relName and own[relName] and own[relName] ~= rel then
+                rel, wrong = own[relName], true   -- points at another window's texture
+            end
+            points[i] = { point, rel, relPoint, x, y }
+        end
+        if wrong then
+            r:ClearAllPoints()
+            for _, pt in ipairs(points) do r:SetPoint(unpack(pt)) end
+        end
+    end
+end
+
 local function ScanChattynator()
     local handler = _G.ChattynatorHyperlinkHandler
     if not handler then return end
@@ -202,6 +366,7 @@ local function ScanChattynator()
         if f.ScrollingMessages and f.TabsBar and f.GetID and f:GetID() ~= 0 then
             seen[f] = true
             if not units[f] then AddChattynator(f) end
+            FixChattynatorBorder(f)
         end
     end
     for key, u in pairs(units) do
@@ -210,10 +375,12 @@ local function ScanChattynator()
 end
 
 ----------------------------------------------------------------------
--- Native adapter (docked chat frames share one unit)
+-- Native adapter
+-- units.native: the dock (tab bar, every docked ChatFrameN with its edit box, extra buttons).
 -- Every docked tab is its own ChatFrameN (parent UIParent) with its own background and
--- side buttons, so all docked frames are faded, not just ChatFrame1. The list is rescanned
--- because whisper tabs (temporary windows) come and go.
+-- side buttons, so all docked frames are faded, not just ChatFrame1.
+-- units["float:<name>"]: one unit per detached (floating) chat window.
+-- Rescanned every second because whisper tabs come and go and windows get (un)docked.
 ----------------------------------------------------------------------
 -- Buttons around the chat that are not children of a chat frame (only faded if parented to UIParent).
 local EXTRA_FRAMES = {
@@ -221,30 +388,67 @@ local EXTRA_FRAMES = {
     "ChatFrameToggleVoiceDeafenButton", "ChatFrameToggleVoiceMuteButton",
 }
 
-local function DockedFrames()
-    local list, inList = {}, {}
-    local function add(f)
-        if f and not inList[f] then
-            inList[f] = true
-            list[#list + 1] = f
+local function EditBoxOf(cf)
+    return cf.editBox or _G[cf:GetName() .. "EditBox"]
+end
+
+local function AllChatFrames()
+    local list = {}
+    if CHAT_FRAMES then
+        for _, name in ipairs(CHAT_FRAMES) do
+            if _G[name] then list[#list + 1] = _G[name] end
         end
-    end
-    add(GeneralDockManager)
-    local docked = (FCFDock_GetChatFrames and GENERAL_CHAT_DOCK) and FCFDock_GetChatFrames(GENERAL_CHAT_DOCK) or { ChatFrame1 }
-    for _, cf in ipairs(docked) do
-        add(cf)
-        add(cf.editBox or _G[cf:GetName() .. "EditBox"])   -- parent is UIParent, so not faded with the frame
-    end
-    for _, name in ipairs(EXTRA_FRAMES) do
-        local f = _G[name]
-        if f and f:GetParent() == UIParent then add(f) end
+    else
+        for i = 1, NUM_CHAT_WINDOWS do
+            if _G["ChatFrame" .. i] then list[#list + 1] = _G["ChatFrame" .. i] end
+        end
     end
     return list
 end
 
+-- key -> list of frames, for the dock and every shown floating window
+local function DesiredUnits()
+    local want = { native = {} }
+    local owned = {}
+    local function add(key, f)
+        if f and not owned[f] then
+            owned[f] = true
+            table.insert(want[key], f)
+        end
+    end
+
+    add("native", GeneralDockManager)
+    local docked = (FCFDock_GetChatFrames and GENERAL_CHAT_DOCK) and FCFDock_GetChatFrames(GENERAL_CHAT_DOCK) or { ChatFrame1 }
+    for _, cf in ipairs(docked) do
+        add("native", cf)
+        add("native", EditBoxOf(cf))   -- parent is UIParent, so not faded with the frame
+    end
+    for _, name in ipairs(EXTRA_FRAMES) do
+        local f = _G[name]
+        if f and f:GetParent() == UIParent then add("native", f) end
+    end
+
+    for _, cf in ipairs(AllChatFrames()) do
+        if not owned[cf] and cf:IsShown() then
+            local key = "float:" .. cf:GetName()
+            want[key] = {}
+            add(key, cf)
+            local tab = _G[cf:GetName() .. "Tab"]
+            if tab and tab:GetParent() ~= GeneralDockManager then add(key, tab) end
+            add(key, EditBoxOf(cf))
+        end
+    end
+    return want
+end
+
+local function UnitOfChatFrame(cf)
+    if cf.isDocked or cf == ChatFrame1 then return units.native end
+    return units["float:" .. cf:GetName()]
+end
+
 local function NativeOver(u)
-    if GeneralDockManager:IsMouseOver() then return "mouse over tabs" end
-    if ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow() then return "typing" end
+    if TypingWakes() and ActiveEditBox() then return "typing" end
+    if u == units.native and GeneralDockManager:IsMouseOver() then return "mouse over tabs" end
     for _, f in ipairs(u.frames) do
         if f ~= GeneralDockManager and f:IsShown() then
             local name = f:GetName() or "chat element"
@@ -255,8 +459,6 @@ local function NativeOver(u)
     end
     return false
 end
-
-local alphaHooked = {}
 
 -- Chat types written by players (GMs whisper as WHISPER). Numbered channels are CHANNEL1..n.
 local PLAYER_TYPES = {
@@ -281,58 +483,200 @@ local function IsPlayerChatType(id)
     return t and (PLAYER_TYPES[t] or strmatch(t, "^CHANNEL%d+$")) and true or false
 end
 
+
+local function HookChatFrame(cf)
+    if hooked[cf] then return end
+    hooked[cf] = true
+    hooksecurefunc(cf, "AddMessage", function(self, _, _, _, _, typeID)
+        -- a shown docked frame is the current tab; a floating window is always "current"
+        if not self:IsShown() then return end
+        if ESFDB.chatHidePlayerOnly and not IsPlayerChatType(typeID) then return end
+        Poke(UnitOfChatFrame(self), "message")
+    end)
+end
+
 local function ScanNative()
-    local u = units.native
-    if not u then return end
-    local frames, seen = DockedFrames(), {}
-    for _, f in ipairs(frames) do
-        seen[f] = true
-        if not u.base[f] then
-            local a = f:GetAlpha()
-            u.base[f] = a > 0.05 and a or 1
+    if not units.native then return end
+    local want = DesiredUnits()
+    local newOwner = {}
+    for key, frames in pairs(want) do
+        if not units[key] then
+            local u = NewUnit({}, nil, nil)
+            u.over = function() return NativeOver(u) end
+            units[key] = u
         end
-        if f:IsObjectType("ScrollingMessageFrame") and not hooked[f] then
-            hooked[f] = true
-            hooksecurefunc(f, "AddMessage", function(self, _, _, _, _, typeID)
-                -- the shown docked frame is the current tab
-                if not (self:IsShown() and (self.isDocked or self == ChatFrame1)) then return end
-                if ESFDB.chatHidePlayerOnly and not IsPlayerChatType(typeID) then return end
-                Poke(units.native, "message")
-            end)
-        end
-        -- Blizzard sets alpha on some of these itself (e.g. the edit box dims when inactive):
-        -- take its value as the new base and keep our fade on top.
-        if not alphaHooked[f] then
-            alphaHooked[f] = true
-            hooksecurefunc(f, "SetAlpha", function(self, a)
-                local un = units.native
-                if applying or not (un and un.base[self]) then return end
-                un.base[self] = a
-                applying = true
-                self:SetAlpha(a * un.alpha)
-                applying = false
-            end)
-        end
+        for _, f in ipairs(frames) do newOwner[f] = units[key] end
     end
+
+    -- 1) give frames back whose owner changes (docked <-> floating) or that are gone
     applying = true
-    for f, a in pairs(u.base) do
-        if not seen[f] then   -- undocked or closed: give its alpha back
-            f:SetAlpha(a)
+    for f, u in pairs(owner) do
+        if newOwner[f] ~= u then
+            f:SetAlpha(u.base[f])
             u.base[f] = nil
+            owner[f] = nil
         end
     end
     applying = false
-    u.frames = frames
-    Apply(u)
+
+    -- 2) take over new frames, then apply each unit's fade
+    for key, frames in pairs(want) do
+        local u = units[key]
+        for _, f in ipairs(frames) do
+            if not owner[f] then
+                local a = f:GetAlpha()
+                u.base[f] = a > 0.05 and a or 1
+                owner[f] = u
+                HookAlpha(f)
+            end
+            if f:IsObjectType("ScrollingMessageFrame") then HookChatFrame(f) end
+        end
+        u.frames = frames
+        Apply(u)
+    end
+
+    -- 3) drop units of windows that were closed or docked again
+    for key in pairs(units) do
+        if strfind(key, "^float:") and not want[key] then units[key] = nil end
+    end
 end
 
 local function SetupNative()
-    local u = NewUnit({}, function() return NativeOver(units.native) end,
-        not ChatEdit_GetActiveWindow and ChatFrame1EditBox or nil)
-    units.native = u
+    units.native = NewUnit({}, nil, not ChatEdit_GetActiveWindow and ChatFrame1EditBox or nil)
+    units.native.over = function() return NativeOver(units.native) end
     ScanNative()
     if FCF_StartAlertFlash then
-        hooksecurefunc("FCF_StartAlertFlash", function() Poke(u, "blink") end)
+        hooksecurefunc("FCF_StartAlertFlash", function(cf)
+            Poke(cf and UnitOfChatFrame(cf) or units.native, "blink")
+        end)
+    end
+end
+
+----------------------------------------------------------------------
+-- Hide button: fades every chat window out at once.
+-- Child of the social button, so it follows that button's position, alpha and
+-- visibility (Chattynator's show/fade rules, our own native fade).
+----------------------------------------------------------------------
+local ICON = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\HideChat.tga"
+local ICON_COLOR = { 0.925, 0.804, 0.063 }   -- same yellow as Chattynator's button icons
+
+local function HideAllNow()
+    for _, u in pairs(units) do u.manual = true end
+    armed = false
+    if debug then
+        lastReason = nil   -- show the next reset reason even if it repeats
+        Print("ESF chat: hide button clicked")
+    end
+end
+
+-- A styled hide button, child of `anchor` (so it follows its position, alpha and visibility).
+local function NewHideButton(anchor)
+    local b = CreateFrame("Button", nil, anchor)
+    b.esfHideButton = true
+    local size = useChattynator and 12 or 16   -- icon size
+    if useChattynator then
+        b:SetSize(26, 28)   -- Chattynator's chat button size
+    else
+        b:SetSize(32, 32)   -- native chat button size
+    end
+
+    -- same calls as Chattynator's Blizzard skin, so the art renders the same way
+    b:SetNormalTexture("chatframe-button-up")
+    b:SetPushedTexture("chatframe-button-down")
+    if useChattynator then
+        b:SetHighlightTexture("chatframe-button-highlight")
+    else
+        b:SetHighlightTexture(130757, "ADD")   -- highlight of the native chat buttons
+    end
+
+    local icon = b:CreateTexture(nil, "OVERLAY")
+    icon:SetTexture(ICON)
+    icon:SetSize(size, size)
+    icon:SetPoint("CENTER")
+    icon:SetVertexColor(unpack(ICON_COLOR))
+    b:SetScript("OnMouseDown", function() icon:SetPoint("CENTER", 2, -2) end)
+    b:SetScript("OnMouseUp", function() icon:SetPoint("CENTER") end)
+
+    b:SetScript("OnClick", function(self)
+        if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+        HideAllNow()
+    end)
+    -- Chattynator "show on hover": keep its buttons shown while ours is hovered
+    local bar = anchor:GetParent()
+    local function BarScript(name)
+        local fn = useChattynator and bar and bar ~= UIParent and bar:GetScript(name)
+        if fn then fn(bar) end
+    end
+    b:SetScript("OnEnter", function(self)
+        -- no tooltip while the button is faded out with the chat
+        if self:GetEffectiveAlpha() > 0.5 then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(WHITE_FONT_COLOR:WrapTextInColorCode("Hide Chat"))
+            GameTooltip:Show()
+        end
+        BarScript("OnEnter")
+    end)
+    b:SetScript("OnLeave", function(self)
+        if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
+        BarScript("OnLeave")
+    end)
+    return b
+end
+
+-- Buttons show when hiding is on; with manual hiding they are the only way to hide, so always.
+local function ShowButtons()
+    return Enabled() and (not TimerMode() or ESFDB.chatHideButton ~= false)
+end
+
+-- Main window: next to (native) or above (Chattynator) the social button.
+local function CreateMainHideButton()
+    local social = QuickJoinToastButton or FriendsMicroButton
+    local anchor = social or (useChattynator and ChattynatorHyperlinkHandler) or GeneralDockManager
+    local b = NewHideButton(anchor)
+    if social and useChattynator then
+        b:SetPoint("BOTTOM", social, "TOP", 0, 5)   -- column above the social button
+    elseif social then
+        b:SetPoint("LEFT", social, "RIGHT", 2, 0)
+    elseif useChattynator then
+        b:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+    else
+        b:SetPoint("BOTTOMRIGHT", anchor, "TOPLEFT", -2, 2)
+    end
+    hideButtons.main = b
+end
+
+-- Every other window gets its own button (each hides all chats):
+-- Chattynator: above that window's button column (its top button is the search button).
+-- Native: above a floating window's side buttons; hidden while the window is docked.
+local function UpdateHideButtons()
+    if useChattynator then
+        for key, u in pairs(units) do
+            local f = u.frame
+            local top = f and f:GetID() ~= 1 and f.ButtonsBar and f.ButtonsBar.SearchButton
+            if top and not hideButtons[f] then
+                local b = NewHideButton(top)
+                b:SetPoint("BOTTOM", top, "TOP", 0, 5)
+                hideButtons[f] = b
+            end
+        end
+    else
+        for key in pairs(units) do
+            local cf = strmatch(key, "^float:(.+)$") and _G[strmatch(key, "^float:(.+)$")]
+            local side = cf and (cf.buttonFrame or _G[cf:GetName() .. "ButtonFrame"])
+            if side and not hideButtons[cf] then
+                local b = NewHideButton(side)
+                b:SetPoint("BOTTOM", side, "TOP", 0, 2)
+                b.chatFrame = cf
+                hideButtons[cf] = b
+            end
+        end
+    end
+    for key, b in pairs(hideButtons) do
+        local show = ShowButtons()
+        if b.chatFrame then   -- native: only while that window floats
+            show = show and units["float:" .. b.chatFrame:GetName()] ~= nil
+        end
+        b:SetShown(show)
     end
 end
 
@@ -353,34 +697,51 @@ driver:SetScript("OnEvent", function(self)
     else
         SetupNative()
     end
+    if useChattynator then HookInputBox() end
+    CreateMainHideButton()
+    UpdateHideButtons()
     self:SetScript("OnUpdate", function(_, dt)
         scanAcc = scanAcc + dt
         if scanAcc >= SCAN_INTERVAL then
             scanAcc = 0
             if useChattynator then ScanChattynator() else ScanNative() end
+            UpdateHideButtons()
         end
         Tick(dt)
     end)
 end)
 
-local function SetMode(v)
-    mode = MODES[v] and v or 1
+-- Any change to the hide/wake settings: start the timer fresh, end a manual hide when switched off.
+local function SettingsChanged()
     local now = GetTime()
-    for _, u in pairs(units) do u.last = now end
-    if ui then ui.Refresh() end
+    for _, u in pairs(units) do
+        u.last = now
+        if not Enabled() then u.manual = nil end
+    end
+    if hideButtons.main then UpdateHideButtons() end
 end
 
 -- /esf testhide [seconds]: pretend the last activity was long ago, so the chat hides
 -- after the given seconds (default 3). Mouse over or an open edit box still keeps it shown.
 ESF.commands.testhide = function(rest)
-    if mode == 1 then
-        Print("ESF: Chat Auto-Hide is set to Never Hide, choose another mode first")
+    if not (Enabled() and TimerMode()) then
+        Print("ESF: Hide Chat must be enabled and set to After Timer first")
         return
     end
     local secs = tonumber(rest) or 3
     local now = GetTime()
     for _, u in pairs(units) do u.last = now - Seconds() + secs end
     Print("ESF: chat hides in " .. secs .. " s (move the mouse away from the chat)")
+end
+
+-- /esf hidechat: hide the chat instantly (no fade). Works with both hide modes, also in instances.
+ESF.commands.hidechat = function()
+    if not Enabled() then return end
+    for _, u in pairs(units) do
+        u.manual = true
+        u.alpha = 0
+        Apply(u)
+    end
 end
 
 ESF.commands.chatdebug = function()
@@ -390,151 +751,110 @@ ESF.commands.chatdebug = function()
 end
 
 ----------------------------------------------------------------------
--- Settings widget: [<] [ dropdown ] [>]  +  seconds box
+-- Settings rows
 ----------------------------------------------------------------------
-local ROW_H = 22
+-- Old saved setting (one 4-step mode) -> new settings. Runs once.
+table.insert(ESF.onLoad, function()
+    local old = ESFDB.chatAutoHide
+    if old == nil or ESFDB.chatHide ~= nil then return end
+    ESFDB.chatHide = old ~= 1
+    ESFDB.chatHideMode = HIDE_TIMER
+    ESFDB.chatWake = ({ [2] = WAKE_ALL, [3] = WAKE_BLINK, [4] = WAKE_MOUSE })[old] or WAKE_ALL
+    ESFDB.chatAutoHide = nil
+end)
 
-local function BuildWidget(panel)
-    local box = CreateFrame("Frame", nil, panel)
-    box:SetSize(460, 88)
+ESF:Section("Hide Chat", "Also works with the Chattynator addon")
 
-    local function Arrow(kind, anchorPoint, x)
-        local b = CreateFrame("Button", nil, box)
-        b:SetSize(24, 24)
-        b:SetPoint("TOPLEFT", x, 0)
-        local base = "Interface\\Buttons\\UI-SpellbookIcon-" .. kind .. "Page-"
-        b:SetNormalTexture(base .. "Up")
-        b:SetPushedTexture(base .. "Down")
-        b:SetDisabledTexture(base .. "Disabled")
-        b:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
-        return b
-    end
+local enable = ESF:Checkbox({
+    key = "chatHide", label = "Enable", default = false,
+    tooltip = "Fades the whole chat out: tabs, windows, buttons and the input box.",
+    onChange = SettingsChanged,
+})
 
-    local prev = Arrow("Prev", "TOPLEFT", 0)
-    local drop = CreateFrame("Button", nil, box, "UIPanelButtonTemplate")
-    drop:SetSize(400, 24)
-    drop:SetPoint("TOPLEFT", 28, 0)
-    drop:SetNormalFontObject(GameFontHighlightSmall)
-    drop:SetHighlightFontObject(GameFontHighlightSmall)
-    local nextB = Arrow("Next", "TOPLEFT", 432)
+local hideMode = ESF:Dropdown({
+    key = "chatHideMode", label = "Hide", default = HIDE_TIMER, parent = enable,
+    enabledIf = Enabled,
+    options = {
+        { HIDE_MANUAL, "Manually", "Only the hide button hides the chat." },
+        { HIDE_TIMER, "After Timer", "Hides the chat after the seconds below without activity." },
+    },
+    onChange = SettingsChanged,
+})
 
-    -- player-only checkbox (only used by "Hide When Idle")
-    local playerOnly = CreateFrame("CheckButton", "ESFChatPlayerOnly", box, "InterfaceOptionsCheckButtonTemplate")
-    playerOnly:SetPoint("TOPLEFT", -2, -30)
-    local playerOnlyText = _G[playerOnly:GetName() .. "Text"]
-    playerOnlyText:SetText("Only Player Messages (Loot, XP and system messages are ignored)")
-    playerOnly:SetChecked(ESFDB.chatHidePlayerOnly and true or false)
-    playerOnly:SetScript("OnClick", function(self)
-        ESFDB.chatHidePlayerOnly = self:GetChecked() and true or false
-    end)
-
-    -- seconds box
-    local label = box:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    label:SetPoint("TOPLEFT", 0, -66)
-    label:SetText("Seconds Until Hidden")
-
-    local eb = CreateFrame("EditBox", nil, box, "InputBoxTemplate")
-    eb:SetSize(50, 20)
-    eb:SetPoint("LEFT", label, "RIGHT", 14, 0)
-    eb:SetAutoFocus(false)
-    eb:SetNumeric(true)
-    eb:SetMaxLetters(4)
-    eb:SetText(tostring(Seconds()))
-
-    local function Commit()
-        local n = tonumber(eb:GetText())
-        if n then
-            n = math.max(1, math.min(MAX_SECONDS, math.floor(n)))
-        else
-            n = Seconds()
+ESF:Custom({
+    label = "Seconds Until Hidden", parent = hideMode,
+    tooltip = "Seconds without activity until the chat hides (1 - " .. MAX_SECONDS .. ").",
+    enabledIf = function() return Enabled() and TimerMode() end,
+    create = function(row)
+        local eb = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+        eb:SetSize(60, 20)
+        eb:SetPoint("LEFT", row, "CENTER", -76, 0)
+        eb:SetAutoFocus(false)
+        eb:SetNumeric(true)
+        eb:SetMaxLetters(4)
+        local function Commit()
+            local n = tonumber(eb:GetText())
+            n = n and math.max(1, math.min(MAX_SECONDS, math.floor(n))) or Seconds()
+            ESFDB.chatHideSeconds = n
+            eb:SetText(tostring(n))
         end
-        ESFDB.chatHideSeconds = n
-        eb:SetText(tostring(n))
-    end
-    eb:SetScript("OnEnterPressed", function(self) Commit() self:ClearFocus() end)
-    eb:SetScript("OnEditFocusLost", Commit)
-    eb:SetScript("OnEscapePressed", function(self)
-        self:SetText(tostring(Seconds()))
-        self:ClearFocus()
-    end)
-    -- Text set while the panel was never shown can stay invisible; set it again on show.
-    eb:SetScript("OnShow", function(self)
-        if not self:HasFocus() then
+        eb:SetScript("OnEnterPressed", function(self) Commit() self:ClearFocus() end)
+        eb:SetScript("OnEditFocusLost", Commit)
+        eb:SetScript("OnEscapePressed", function(self)
             self:SetText(tostring(Seconds()))
-            self:SetCursorPosition(0)
+            self:ClearFocus()
+        end)
+        return eb
+    end,
+    update = function(eb, on)
+        if not eb:HasFocus() then
+            eb:SetText(tostring(Seconds()))
+            eb:SetCursorPosition(0)
         end
-    end)
-
-    -- popup list
-    local list = CreateFrame("Frame", "ESFChatModeList", UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    list:SetSize(420, #MODES * ROW_H + 12)
-    list:SetFrameStrata("DIALOG")
-    list:SetClampedToScreen(true)
-    list:EnableMouse(true)
-    list:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    list:Hide()
-    tinsert(UISpecialFrames, "ESFChatModeList")
-    panel:HookScript("OnHide", function() list:Hide() end)
-    list:SetScript("OnShow", function(self) pcall(self.RegisterEvent, self, "GLOBAL_MOUSE_DOWN") end)
-    list:SetScript("OnHide", function(self) pcall(self.UnregisterEvent, self, "GLOBAL_MOUSE_DOWN") end)
-    list:SetScript("OnEvent", function(self)
-        if not self:IsMouseOver() and not drop:IsMouseOver() then self:Hide() end
-    end)
-
-    local rows = {}
-    local function Select(i)
-        ESFDB.chatAutoHide = i
-        SetMode(i)
-    end
-    for i, name in ipairs(MODES) do
-        local r = CreateFrame("Button", nil, list)
-        r:SetSize(404, ROW_H)
-        r:SetPoint("TOPLEFT", 8, -6 - (i - 1) * ROW_H)
-        r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
-        r.text = r:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        r.text:SetPoint("LEFT", 6, 0)
-        r.text:SetText(name)
-        r:SetScript("OnClick", function() list:Hide() Select(i) end)
-        rows[i] = r
-    end
-
-    drop:SetScript("OnClick", function(self)
-        if list:IsShown() then list:Hide() return end
-        list:ClearAllPoints()
-        list:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -2)
-        list:Show()
-    end)
-    prev:SetScript("OnClick", function() Select(mode - 1) end)
-    nextB:SetScript("OnClick", function() Select(mode + 1) end)
-
-    local function Refresh()
-        drop:SetText(MODES[mode])
-        prev:SetEnabled(mode > 1)
-        nextB:SetEnabled(mode < #MODES)
-        for i, r in ipairs(rows) do
-            r.text:SetFontObject(i == mode and GameFontNormalSmall or GameFontHighlightSmall)
-        end
-        local on = mode ~= 1
-        eb:SetAlpha(on and 1 or 0.5)
-        label:SetTextColor((on and HIGHLIGHT_FONT_COLOR or GRAY_FONT_COLOR):GetRGB())
         eb:EnableMouse(on)
+        eb:SetAlpha(on and 1 or 0.5)
         if not on then eb:ClearFocus() end
-        local idle = mode == 2
-        playerOnly:SetEnabled(idle)
-        playerOnlyText:SetTextColor((idle and HIGHLIGHT_FONT_COLOR or GRAY_FONT_COLOR):GetRGB())
-    end
-    ui = { Refresh = Refresh }
-    Refresh()
-    return box
-end
+    end,
+})
 
-ESF:SetSectionNote("Chat Auto-Hide", "(Also works with the Chattynator addon)")
-ESF:RegisterCustomFeature("Chat Auto-Hide", "chatAutoHide", 1, function(v)
+local wake = ESF:Dropdown({
+    key = "chatWake", label = "Wake Up", default = WAKE_ALL, parent = enable,
+    enabledIf = Enabled,
+    options = {
+        { WAKE_ALL, "Mouse Over, Blinking or New Message", "New messages in the selected tab also restart the timer." },
+        { WAKE_BLINK, "Mouse Over or Blinking" },
+        { WAKE_MOUSE, "Mouse Over Only" },
+    },
+    onChange = SettingsChanged,
+})
+
+ESF:Checkbox({
+    key = "chatHidePlayerOnly", label = "Only Player Messages", default = false, parent = wake,
+    tooltip = "Only messages written by players wake the chat. Loot, XP, emotes and system messages are ignored.",
+    enabledIf = function() return Enabled() and Wake() == WAKE_ALL end,
+})
+
+ESF:Checkbox({
+    key = "chatHideNoInstance", label = "Never Auto-Hide in Instances", default = false, parent = enable,
+    tooltip = "The timer does not hide the chat in dungeons, raids, battlegrounds and arenas. The hide button still works.",
+    enabledIf = function() return Enabled() and TimerMode() end,
+})
+
+ESF:Checkbox({
+    key = "chatHideButton", label = "Show Hide Button", default = true, parent = enable,
+    tooltip = "A button on each chat window that fades the chat out instantly. Always shown when hiding manually.",
+    enabledIf = function() return Enabled() and TimerMode() end,
+    onChange = function() if hideButtons.main then UpdateHideButtons() end end,
+})
+
+ESF:Checkbox({
+    key = "chatShowWhileTyping", label = "Show Chat While Typing", default = true, parent = enable,
+    tooltip = "Pressing Enter brings the chat back. Off: only the input box appears.",
+    enabledIf = Enabled,
+    onChange = function() for _, u in pairs(units) do Apply(u) end end,
+})
+
+-- seconds default, so the box never starts empty
+table.insert(ESF.onLoad, function()
     if ESFDB.chatHideSeconds == nil then ESFDB.chatHideSeconds = DEFAULT_SECONDS end
-    SetMode(v)
-end, BuildWidget)
+end)

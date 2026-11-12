@@ -10,3 +10,5 @@ Main.lua
 Features\StatusText.lua
 Features\RangeFinder.lua
 Features\ChatAutoHide.lua
+Features\DamageMeter.lua
+Features\SpellPowerTooltip.lua

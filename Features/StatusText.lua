@@ -112,14 +112,20 @@ ev:SetScript("OnEvent", function()
     end
 end)
 
+ESF:Section("Minimal Status Text", "Status text on health and power bars only show current values")
+
 local function Register(name, key, label)
-    ESF:RegisterFeature("Status Text", key, label, true, function(on)
-        enabled[name] = on
-        RefreshGroup(name)
-    end)
+    ESF:Checkbox({
+        key = key, label = label, default = true,
+        tooltip = "Shows only the current value on these bars instead of value / maximum.",
+        onChange = function(on)
+            enabled[name] = on
+            RefreshGroup(name)
+        end,
+    })
 end
 
-Register("player", "statusTextPlayer", "Current Value Only (Player Frame)")
-Register("target", "statusTextTarget", "Current Value Only (Target Frame)")
-Register("pet", "statusTextPet", "Current Value Only (Pet Frame)")
-Register("party", "statusTextParty", "Current Value Only (Party Frames)")
+Register("player", "statusTextPlayer", "Player Frame")
+Register("target", "statusTextTarget", "Target Frame")
+Register("pet", "statusTextPet", "Pet Frame")
+Register("party", "statusTextParty", "Party Frames")

@@ -8,7 +8,6 @@ local RADIUS_DEFAULT, RADIUS_MIN, RADIUS_MAX = 4, 2, 14
 
 local enabled = { Hostile = false, Friendly = false }
 local unlocked = false
-local buttons = {}   -- kind -> picker button in the settings panel
 
 ----------------------------------------------------------------------
 -- Spell helpers (modern C_Spell/C_SpellBook with fallbacks to old globals)
@@ -317,87 +316,82 @@ local function GetPicker(panel)
 end
 
 ----------------------------------------------------------------------
--- Feature registration
+-- Settings rows
 ----------------------------------------------------------------------
-local function Register(kind, label)
-    local dbKey = "range" .. kind
+ESF:Section("Range Finder", "Abilities are saved per character")
 
-    local function extra(cb, panel)
-        local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-        btn:SetSize(240, 22)
-        local spell = ESFCharDB[dbKey .. "Spell"]
-        btn:SetText(spell and spell.name or "Choose Ability...")
-        btn:SetEnabled(ESFCharDB[dbKey] and true or false)
-        btn:SetScript("OnClick", function(self)
-            GetPicker(panel):Open(self, function(chosen)
-                ESFCharDB[dbKey .. "Spell"] = chosen
-                self:SetText(chosen.name)
-                Refresh()
+-- A button in the control column that opens the spell picker.
+local function AbilityRow(kind, parentSpec)
+    local dbKey = "range" .. kind .. "Spell"
+    ESF:Custom({
+        label = "Ability",
+        tooltip = "The ability whose range is checked.",
+        parent = parentSpec,
+        create = function(row)
+            local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            btn:SetSize(200, 22)
+            btn:SetPoint("LEFT", row, "CENTER", -80, 0)
+            btn:SetScript("OnClick", function(self)
+                GetPicker(SettingsPanel):Open(self, function(chosen)
+                    ESFCharDB[dbKey] = chosen
+                    self:SetText(chosen.name)
+                    Refresh()
+                end)
             end)
-        end)
-        buttons[kind] = btn
-        return btn
-    end
+            return btn
+        end,
+        update = function(btn, on)
+            local spell = ESFCharDB[dbKey]
+            btn:SetText(spell and spell.name or "Choose Ability...")
+            btn:SetEnabled(on)
+        end,
+    })
+end
 
-    local f = ESF:RegisterFeature("Range Finder", dbKey, label, false, function(on)
-        enabled[kind] = on
-        if buttons[kind] then buttons[kind]:SetEnabled(on) end
+local function Register(kind, label, tooltip)
+    local spec = ESF:Checkbox({
+        key = "range" .. kind, label = label, tooltip = tooltip, default = false, perChar = true,
+        onChange = function(on)
+            enabled[kind] = on
+            Refresh()
+        end,
+    })
+    AbilityRow(kind, spec)
+end
+
+Register("Hostile", "Hostile Target", "Shows the dot when the chosen ability is out of range of a hostile target.")
+Register("Friendly", "Friendly Target", "Shows the dot when the chosen ability is out of range of a friendly target.")
+
+ESF:Checkbox({
+    key = "rangeUnlock", label = "Test and Unlock", default = false,
+    tooltip = "Shows the dot and lets you drag it to a new position.",
+    onChange = function(on)
+        unlocked = on
+        dot:EnableMouse(on)
         Refresh()
-    end, extra)
-    f.perChar = true
-end
+    end,
+})
 
-ESF:SetSectionNote("Range Finder", "(Abilities are character specific)")
-Register("Hostile", "Hostile Target Ability (Dot shows when out of range)")
-Register("Friendly", "Friendly Target Ability (Dot shows when out of range)")
+ESF:Slider({
+    key = "rangeDotRadius", label = "Dot Radius", default = RADIUS_DEFAULT,
+    min = RADIUS_MIN, max = RADIUS_MAX, step = 1,
+    format = function(v) return math.floor(v + 0.5) .. " px" end,
+    onChange = function() ApplySize() end,
+})
 
--- Slider for the dot radius, placed under the unlock checkbox.
-local function SizeSlider(cb, panel)
-    local box = CreateFrame("Frame", nil, panel)
-    box:SetSize(320, 56)
-
-    local reset = CreateFrame("Button", nil, box, "UIPanelButtonTemplate")
-    reset:SetSize(240, 22)
-    reset:SetPoint("TOPLEFT", 0, 0)
-    reset:SetText("Reset Position and Size")
-    reset:SetScript("OnClick", function()
-        ESFDB.rangeDotPos = nil
-        ESFDB.rangeDotRadius = nil
-        ReloadUI()
-    end)
-
-    local s = CreateFrame("Slider", nil, box)
-    s:SetOrientation("HORIZONTAL")
-    s:SetSize(180, 16)
-    s:SetPoint("LEFT", box, "BOTTOMLEFT", 0, 12)
-    s:SetMinMaxValues(RADIUS_MIN, RADIUS_MAX)
-    s:SetValueStep(1)
-    if s.SetObeyStepOnDrag then s:SetObeyStepOnDrag(true) end
-
-    local track = s:CreateTexture(nil, "BACKGROUND")
-    track:SetPoint("LEFT")
-    track:SetPoint("RIGHT")
-    track:SetHeight(4)
-    track:SetColorTexture(0.4, 0.4, 0.4, 0.8)
-
-    s:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
-
-    local text = box:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    text:SetPoint("LEFT", s, "RIGHT", 12, 0)
-
-    s:SetValue(Radius())
-    text:SetText("Dot Radius: " .. Radius() .. " px")
-    s:SetScript("OnValueChanged", function(_, v)
-        v = math.floor(v + 0.5)
-        ESFDB.rangeDotRadius = v
-        text:SetText("Dot Radius: " .. v .. " px")
-        ApplySize()
-    end)
-    return box
-end
-
-ESF:RegisterFeature("Range Finder", "rangeUnlock", "Test and Unlock (Drag to move it)", false, function(on)
-    unlocked = on
-    dot:EnableMouse(on)
-    Refresh()
-end, SizeSlider)
+ESF:Custom({
+    label = "Dot Position",
+    tooltip = "Moves the dot back above the target frame and restores the default size (reloads the UI).",
+    create = function(row)
+        local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        btn:SetSize(200, 22)
+        btn:SetPoint("LEFT", row, "CENTER", -80, 0)
+        btn:SetText("Reset Position and Size")
+        btn:SetScript("OnClick", function()
+            ESFDB.rangeDotPos = nil
+            ESFDB.rangeDotRadius = nil
+            ReloadUI()
+        end)
+        return btn
+    end,
+})
