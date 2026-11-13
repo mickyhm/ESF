@@ -26,7 +26,7 @@ local function Parse(body)
     if school and SCHOOLS[school] then return v, nil, school end
 end
 
--- Full line in, short line(s) out (spell power first, healing second), or nil if not handled.
+-- Full line in, short line(s) out (spell damage first, healing second), or nil if not handled.
 local function Rewrite(text)
     local prefix, body = "", strmatch(text, "^Equip: (.+)$")
     if not body then
@@ -36,7 +36,7 @@ local function Rewrite(text)
     local sp, heal, school = Parse(body)
     if not (sp or heal) then return end
     local out = {}
-    if sp then out[#out + 1] = prefix .. "+" .. sp .. " " .. (school and school .. " " or "") .. "Spell Power" end
+    if sp then out[#out + 1] = prefix .. "+" .. sp .. " " .. (school and school .. " " or "") .. "Spell Damage" end
     if heal then out[#out + 1] = prefix .. "+" .. heal .. " Healing" end
     return table.concat(out, "\n")   -- two stats -> two lines in the same FontString
 end
@@ -83,6 +83,6 @@ ESF:Section("Spell Power Tooltip", "Item tooltips show spell power and healing a
 
 ESF:Checkbox({
     key = "spellPowerTooltip", label = "Compact Spell Power Lines", default = true,
-    tooltip = 'Shows e.g. "+30 Spell Power" and "+30 Healing" instead of the long "Equip: Increases ..." text.',
+    tooltip = 'Shows e.g. "+30 Spell Damage" and "+30 Healing" instead of the long "Equip: Increases ..." text.',
     onChange = function(on) enabled = on end,
 })
