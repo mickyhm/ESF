@@ -1,4 +1,3 @@
--- Features\RangeFinder.lua
 local ADDON, ESF = ...
 
 -- Default dot position relative to the target frame (used until the dot is moved).
@@ -318,7 +317,11 @@ end
 ----------------------------------------------------------------------
 -- Settings rows
 ----------------------------------------------------------------------
-ESF:Section("Range Finder", "Abilities are saved per character")
+local mod = ESF:Module({
+    name = "Range Finder", key = "rangeFinder",
+    desc = "A movable dot that indicates when the target is out of range",
+    note = "Shows a dot when the target is out of range of the chosen ability. Abilities are saved per character.",
+})
 
 -- A button in the control column that opens the spell picker.
 local function AbilityRow(kind, parentSpec)
@@ -352,7 +355,7 @@ local function Register(kind, label, tooltip)
     local spec = ESF:Checkbox({
         key = "range" .. kind, label = label, tooltip = tooltip, default = false, perChar = true,
         onChange = function(on)
-            enabled[kind] = on
+            enabled[kind] = on and mod:IsOn()
             Refresh()
         end,
     })
@@ -366,8 +369,8 @@ ESF:Checkbox({
     key = "rangeUnlock", label = "Test and Unlock", default = false,
     tooltip = "Shows the dot and lets you drag it to a new position.",
     onChange = function(on)
-        unlocked = on
-        dot:EnableMouse(on)
+        unlocked = on and mod:IsOn()
+        dot:EnableMouse(unlocked)
         Refresh()
     end,
 })

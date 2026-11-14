@@ -1,4 +1,3 @@
--- Features\BagOrder.lua
 -- New items at the bottom: the game puts new items into the last bag first
 -- (C_Container.SetInsertItemsLeftToRight), and inside every bag the slots are shown in reverse
 -- (first slot where the last one is, and so on). Bag order and the items themselves don't change;
@@ -136,12 +135,13 @@ local function SetInsert(on)
     end
 end
 
-ESF:Section("Bag Order")
+local mod = ESF:Module("Bag Options")   -- defined in ReagentBag.lua
 
 ESF:Checkbox({
     key = "newItemsBottom", label = "New Items at the Bottom", default = false,
     tooltip = "New items go into your last bag first, and the slots inside every bag are shown in reverse, so new items appear at the bottom.",
     onChange = function(on)
+        on = on and mod:IsOn()
         -- at login only switch the game setting on; an unchecked box leaves it as it is
         if on or loaded then SetInsert(on) end
         enabled = on

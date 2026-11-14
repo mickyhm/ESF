@@ -1,4 +1,3 @@
--- Features\DamageMeter.lua
 -- Minimap button that toggles Blizzard's damage meter between "maximized and visible"
 -- and "invisible but still active". The native minimize button only hides it.
 --
@@ -139,7 +138,7 @@ local function CreateMinimapButton()
     local bg = b:CreateTexture(nil, "BACKGROUND")
     bg:SetSize(20, 20)
     bg:SetPoint("CENTER", 0, 1)
-    bg:SetColorTexture(0.11, 0.11, 0.12)   -- black, slightly grey
+    bg:SetColorTexture(0.11, 0.11, 0.12)
     local mask = b:CreateMaskTexture()
     mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
     mask:SetAllPoints(bg)
@@ -176,14 +175,63 @@ local function CreateMinimapButton()
     end)
     b:SetScript("OnLeave", GameTooltip_Hide)
 
-    local a = math.rad(MINIMAP_ANGLE)
-    local r = Minimap:GetWidth() / 2 + 5
-    b:SetPoint("CENTER", Minimap, "CENTER", math.cos(a) * r, math.sin(a) * r)
     return b
 end
 
 minimapButton = CreateMinimapButton()
 minimapButton:Hide()
+
+----------------------------------------------------------------------
+-- Position on the minimap border; drag to move it along the border.
+-- Only while the button is still on the Minimap: once MinimapButtonButton
+-- has collected it, MBB owns the position and dragging is off.
+----------------------------------------------------------------------
+local function OnMinimap()
+    return minimapButton:GetParent() == Minimap
+end
+
+local function PlaceAt(deg)
+    local a = math.rad(deg)
+    local r = Minimap:GetWidth() / 2 + 5
+    minimapButton:ClearAllPoints()
+    minimapButton:SetPoint("CENTER", Minimap, "CENTER", math.cos(a) * r, math.sin(a) * r)
+end
+
+local function SavedAngle()
+    return ESFDB and ESFDB.dmMinimapAngle or MINIMAP_ANGLE
+end
+
+local function CursorAngle()
+    local mx, my = Minimap:GetCenter()
+    local scale = Minimap:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    return math.deg(math.atan2(cy / scale - my, cx / scale - mx)) % 360
+end
+
+local dragged = false
+minimapButton:RegisterForDrag("LeftButton")
+minimapButton:SetScript("OnDragStart", function(self)
+    if not OnMinimap() then return end
+    dragged = true
+    GameTooltip:Hide()
+    self:SetScript("OnUpdate", function() PlaceAt(CursorAngle()) end)
+end)
+minimapButton:SetScript("OnDragStop", function(self)
+    self:SetScript("OnUpdate", nil)
+    if not OnMinimap() then return end
+    ESFDB.dmMinimapAngle = CursorAngle()
+    PlaceAt(ESFDB.dmMinimapAngle)
+end)
+
+-- a drag must not also toggle the meter
+local onClick = minimapButton:GetScript("OnClick")
+minimapButton:SetScript("OnClick", function(...)
+    if dragged then dragged = false return end
+    onClick(...)
+end)
+minimapButton:HookScript("OnMouseDown", function() dragged = false end)
+
+PlaceAt(MINIMAP_ANGLE)   -- saved angle is applied at login
 
 -- The button only shows while the meter is enabled in Blizzard's options (CVar damageMeterEnabled).
 local function MeterEnabled()
@@ -240,6 +288,7 @@ ev:SetScript("OnEvent", function(_, event, name)
         if name == "damageMeterEnabled" then UpdateButton() end
         return
     end
+    if OnMinimap() then PlaceAt(SavedAngle()) end
     UpdateButton()
     if DamageMeter then
         Init()
@@ -248,11 +297,14 @@ ev:SetScript("OnEvent", function(_, event, name)
     end
 end)
 
-ESF:RegisterFeature("Damage Meter", "dmMinimapButton",
-    "Minimap Button (Click shows the damage meter maximized or hides it)", true,
-    function(on)
+ESF:Module({
+    name = "Damage Meter Button", key = "dmMinimapButton",
+    desc = "Minimap button that shows or hides the damage meter completely",
+    note = "A minimap button: click shows the damage meter maximized or hides it completely.",
+    onChange = function(on)
         enabled = on
         UpdateButton()
         if not on and ESFCharDB then ESFCharDB.dmHidden = false end
         Apply()
-    end)
+    end,
+})

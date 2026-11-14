@@ -1,4 +1,3 @@
--- Features\StatusText.lua
 local ADDON, ESF = ...
 
 -- Walk a chain of keys, return nil if any step is missing.
@@ -112,14 +111,17 @@ ev:SetScript("OnEvent", function()
     end
 end)
 
-ESF:Section("Minimal Status Text", "Status text on health and power bars only show current values")
+local mod = ESF:Module({
+    name = "Minimal Status Text", key = "statusText",
+    desc = "Health and power bars show only the current value",
+})
 
 local function Register(name, key, label)
     ESF:Checkbox({
         key = key, label = label, default = true,
         tooltip = "Shows only the current value on these bars instead of value / maximum.",
         onChange = function(on)
-            enabled[name] = on
+            enabled[name] = on and mod:IsOn()
             RefreshGroup(name)
         end,
     })

@@ -1,4 +1,3 @@
--- Features\ReagentBag.lua
 -- When an action opens all normal bags at once (combined backpack, or several separate bags in
 -- the same frame), the reagent bag opens too. It closes again once no normal bag is open.
 -- Opening a single bag (backpack only, one bag by click) leaves the reagent bag alone, unless
@@ -92,10 +91,14 @@ end
 HookFrame(ContainerFrameCombinedBags)
 for i = 1, NUM_CONTAINER_FRAMES or 13 do HookFrame(_G["ContainerFrame" .. i]) end
 
-ESF:Section("Reagent Bag")
+-- shared with BagOrder.lua (loaded after this file)
+local mod = ESF:Module({
+    name = "Bag Options", key = "bagOptions",
+    desc = "Small and simple tweaks to bags",
+})
 
 ESF:Checkbox({
-    key = "reagentBagWithAll", label = "Open With All Bags", default = true,
+    key = "reagentBagWithAll", label = "Open Reagent with Backpack", default = true,
     tooltip = "The reagent bag opens when all your bags are opened at once (e.g. Open All Bags or the combined backpack) and closes with them. Opening a single bag leaves it closed.",
-    onChange = function(on) enabled = on end,
+    onChange = function(on) enabled = on and mod:IsOn() end,
 })

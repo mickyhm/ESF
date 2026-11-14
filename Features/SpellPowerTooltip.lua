@@ -1,11 +1,10 @@
--- Features\SpellPowerTooltip.lua
 -- Rewrites verbose spell power / healing equip lines on item tooltips into short stat lines.
 local ADDON, ESF = ...
 
 local enabled = false
 
--- Print equip lines about spells/healing that no pattern handles (dev aid; set false when done).
-local DEBUG_UNMATCHED = true
+-- Print equip lines about spells/healing that no pattern handles.
+local DEBUG_UNMATCHED = false
 
 local SCHOOLS = { Arcane = true, Fire = true, Frost = true, Holy = true, Nature = true, Shadow = true }
 
@@ -37,11 +36,11 @@ local function Rewrite(text)
     if not (sp or heal) then return end
     local out = {}
     if sp then out[#out + 1] = prefix .. "+" .. sp .. " " .. (school and school .. " " or "") .. "Spell Damage" end
-    if heal then out[#out + 1] = prefix .. "+" .. heal .. " Healing" end
+    if heal then out[#out + 1] = prefix .. "+" .. heal .. " Spell Healing" end
     return table.concat(out, "\n")   -- two stats -> two lines in the same FontString
 end
 
-local reported = {}   -- unmatched lines already printed (dev aid only)
+local reported = {}   -- unmatched lines already printed
 
 local function ReportUnmatched(text)
     if reported[text] or not (strfind(text, "^Equip:") or strfind(text, "^%(%d+%) Set:")) then return end
@@ -79,10 +78,10 @@ if TooltipDataProcessor and Enum.TooltipDataType and Enum.TooltipDataType.Item t
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, OnItemTooltip)
 end
 
-ESF:Section("Spell Power Tooltip", "Item tooltips show spell power and healing as short stat lines")
-
-ESF:Checkbox({
-    key = "spellPowerTooltip", label = "Compact Spell Power Lines", default = true,
-    tooltip = 'Shows e.g. "+30 Spell Damage" and "+30 Healing" instead of the long "Equip: Increases ..." text.',
+ESF:Module({
+    name = "Spell Power Tooltip", key = "spellPowerTooltip",
+    desc = "Short spell damage and healing lines on item tooltips",
+    note = "Item tooltips show spell damage and healing as short stat lines.",
+    tooltip = 'Shows e.g. "+30 Spell Damage" and "+30 Spell Healing" instead of the long "Equip: Increases ..." text.',
     onChange = function(on) enabled = on end,
 })

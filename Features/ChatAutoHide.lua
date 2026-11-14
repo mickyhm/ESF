@@ -1,10 +1,9 @@
--- Features\ChatAutoHide.lua  ("Hide Chat" in the settings)
--- Fades the whole chat (window, tabs, buttons) to invisible, manually (hide button) or after a timer.
+-- Hide Chat: fades the whole chat (window, tabs, buttons) to invisible, manually (hide button) or after a timer.
 -- Works with Chattynator (if loaded) or the native Blizzard chat.
 local ADDON, ESF = ...
 
 local HIDE_MANUAL, HIDE_TIMER = 1, 2
-local WAKE_ALL, WAKE_BLINK, WAKE_MOUSE = 1, 2, 3   -- mouse over + blinking + messages / + blinking / only
+local WAKE_ALL, WAKE_BLINK, WAKE_MOUSE = 1, 2, 3   -- wake on: mouse + blink + message / mouse + blink / mouse only
 local DEFAULT_SECONDS, MAX_SECONDS = 60, 3600
 local FADE_IN, FADE_OUT = 0.15, 0.6      -- seconds
 local SCAN_INTERVAL = 1                  -- Chattynator window scan
@@ -321,14 +320,9 @@ local function AddChattynator(f)
 end
 
 ----------------------------------------------------------------------
--- TEMPORARY WORKAROUND for a Chattynator bug (Blizzard skin), remove once Chattynator fixes it.
--- Each window's skin background is CreateFrame("Frame", nil, window, "FloatingBorderedFrame").
--- Without a frame name, the template's textures all get the same global names
--- (ChattynatorHyperlinkHandlerTopRightTexture, ...), and their anchors ($parentBackground,
--- corner textures) resolve to the FIRST window's textures. So every extra window draws its
--- border around the main window instead of around itself.
--- Fix: re-anchor each window's border textures to that window's own textures (same name).
--- To revert: delete this function and the FixChattynatorBorder(f) call in ScanChattynator.
+-- Workaround for a Chattynator bug (Blizzard skin): the unnamed FloatingBorderedFrame backgrounds
+-- share global texture names, so every extra window anchors its border to the first window.
+-- Re-anchor each border to the window's own textures. Remove once fixed upstream.
 ----------------------------------------------------------------------
 local borderFixed = {}
 
@@ -763,11 +757,10 @@ table.insert(ESF.onLoad, function()
     ESFDB.chatAutoHide = nil
 end)
 
-ESF:Section("Hide Chat", "Also works with the Chattynator addon")
-
-local enable = ESF:Checkbox({
-    key = "chatHide", label = "Enable", default = false,
-    tooltip = "Fades the whole chat out: tabs, windows, buttons and the input box.",
+local enable = ESF:Module({
+    name = "Hide Chat", key = "chatHide",
+    desc = "Fades the chat out after a timer or on click",
+    note = "Fades the whole chat out: tabs, windows, buttons and the input box.",
     onChange = SettingsChanged,
 })
 
