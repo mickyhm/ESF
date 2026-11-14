@@ -1,16 +1,26 @@
-local ADDON, ESF = ...   -- the same ESF table is shared by all files of the addon
+local ADDON, ESF = ...
 
--- The settings page is our own canvas, styled like Blizzard's options (fonts, controls,
--- spacing). Features describe their rows in file order; the page is built at ADDON_LOADED
+-- The settings pages are our own canvases, styled like Blizzard's options (fonts, controls,
+-- spacing). Features describe their rows in file order; the pages are built at ADDON_LOADED
 -- once the saved variables exist.
+--
+-- The main page shows a tile per module (click = enable/disable). Every module gets its own
+-- sub-entry with an Enable checkbox in the page header and the module's rows below it.
+--   ESF:Module{ name, key, desc [, default, note, tooltip, icon, perChar, onChange] }
+--       starts a module; the rows that follow belong to it. ESF:Module(name) continues an
+--       existing one (e.g. a second file adding rows). desc goes on the tile, note (default:
+--       desc) under the page title. Switching the module runs onChange(on) and then the
+--       onChange of all its rows again, so features can use value and module:IsOn().
+--       Rows of a disabled module are greyed out; their saved values stay as they are.
 --
 -- Row specs (all optional fields in brackets):
 --   ESF:Section(name [, note])                     white header, small grey description below it
 --   ESF:Checkbox{ key, label, default [, tooltip, perChar, onChange, parent, enabledIf] }
 --   ESF:Dropdown{ key, label, default, options = { {value, text [, tooltip]}, ... } [, ...] }
 --   ESF:Slider{ key, label, default, min, max, step [, format, ...] }
---   ESF:Custom{ label [, tooltip, create, update, parent, enabledIf] }
+--   ESF:Custom{ label [, tooltip, create, update, parent, enabledIf, noLabel] }
 --       create(row) -> widget   builds the control once, placed in the control column of `row`
+--       noLabel: no label and no hover/tooltip; place the control at row.labelX (label indent)
 --       update(widget, enabled) refreshes it (value, enabled state)
 -- onChange(value) runs once at load and after every change. perChar stores the value in
 -- ESFCharDB instead of ESFDB. parent (a spec) greys the row out with it; enabledIf() greys it out.
@@ -18,13 +28,40 @@ local ADDON, ESF = ...   -- the same ESF table is shared by all files of the add
 ESF.rows = {}       -- ordered list of row specs
 ESF.features = {}   -- specs with a saved value (key), for defaults/init
 ESF.onLoad = {}     -- functions run after the saved variables are loaded, before defaults
+ESF.modules = {}    -- module specs in registration order (tiles / sub-entries)
 local sectionByName = {}
+local moduleByName = {}
+local currentModule  -- module the next rows belong to
 
 local function AddRow(kind, spec)
     spec.kind = kind
+    spec.module = currentModule
     table.insert(ESF.rows, spec)
+    if currentModule then table.insert(currentModule.rows, spec) end
     if spec.key then table.insert(ESF.features, spec) end
     return spec
+end
+
+local function ModuleIsOn(self)
+    return ESF:Get(self) and true or false
+end
+
+function ESF:Module(spec)
+    local name = type(spec) == "table" and spec.name or spec
+    local m = moduleByName[name]
+    if not m then
+        assert(type(spec) == "table", "ESF: unknown module " .. tostring(name))
+        m = spec
+        m.kind = "module"
+        m.rows = {}
+        m.IsOn = ModuleIsOn
+        if m.default == nil then m.default = false end
+        moduleByName[name] = m
+        table.insert(self.modules, m)
+        if m.key then table.insert(self.features, m) end
+    end
+    currentModule = m
+    return m
 end
 
 function ESF:Section(name, note)
@@ -43,8 +80,8 @@ function ESF:Dropdown(spec) return AddRow("dropdown", spec) end
 function ESF:Slider(spec) return AddRow("slider", spec) end
 function ESF:Custom(spec) return AddRow("custom", spec) end
 
--- Old style (kept for simple features): a checkbox under a section.
--- "Label (explanation)" becomes label + tooltip, as Blizzard's options do it.
+-- Shorthand: a checkbox under a section.
+-- "Label (explanation)" becomes label + tooltip.
 function ESF:RegisterFeature(section, key, label, default, onToggle)
     self:Section(section)
     local text, tip = strmatch(label or "", "^(.-)%s*%((.+)%)$")
@@ -65,13 +102,13 @@ function ESF:Get(spec)
 end
 
 ----------------------------------------------------------------------
--- Building the page (our own canvas, styled like Blizzard's options)
+-- Building the page
 ----------------------------------------------------------------------
 local GetMeta = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
 
--- Layout, measured from Blizzard's options page
+-- Layout
 local ROW_H = 35            -- distance between rows
-local HEADER_TO_ROW = 36    -- section header -> its first row (a bit tighter than Blizzard's)
+local HEADER_TO_ROW = 36    -- section header -> its first row
 local SECTION_GAP = 20      -- extra space between the last row of a section and the next header
 local HEADER_X = 10         -- section header indent
 local LABEL_X = 42          -- label indent, the same for every row (Blizzard: header + ~30)
@@ -83,6 +120,7 @@ local function HasAtlas(name)
 end
 
 local function IsEnabled(spec)
+    if spec.module and not ESF:Get(spec.module) then return false end
     if spec.parent and not IsEnabled(spec.parent) then return false end
     if spec.parent and spec.parent.key and not spec.enabledIf and not ESF:Get(spec.parent) then return false end
     if spec.enabledIf and not spec.enabledIf() then return false end
@@ -98,13 +136,19 @@ end
 local function Set(spec, value)
     ESF:Store(spec)[spec.key] = value
     if spec.onChange then spec.onChange(value) end
+    if spec.kind == "module" then
+        -- let the module's rows apply their (unchanged) values with the new module state
+        for _, r in ipairs(spec.rows) do
+            if r.key and r.onChange then r.onChange(ESF:Get(r)) end
+        end
+    end
     ESF:RefreshSettings()
 end
 
 local DROPDOWN_W = 218       -- Blizzard's dropdown width (fixed, whatever the entries need)
 local MENU_TEXT_X = 18       -- text indent of the entries in the opened list
 
--- Tooltip just above where a checkbox sits in this row, like Blizzard's (title + description).
+-- Tooltip just above where a checkbox sits in this row (title + description).
 local function ShowTooltip(row, spec)
     GameTooltip:SetOwner(row, "ANCHOR_NONE")
     GameTooltip:SetPoint("BOTTOMLEFT", row.tipAnchor, "TOPLEFT", -14, -2)
@@ -113,7 +157,7 @@ local function ShowTooltip(row, spec)
     GameTooltip:Show()
 end
 
--- Row hover, like Blizzard's: from the left edge up to and including the control the row is
+-- Row hover: from the left edge up to and including the control the row is
 -- highlighted and shows its tooltip; right of the control nothing happens.
 -- `frames` are the control's mouse-enabled parts (they sit on top of the hover area).
 local function AttachHover(row, spec, control, frames)
@@ -241,7 +285,7 @@ local function BuildDropdown(content, spec)
     end
 
     local control, dd, prev, nextB = NewStepperDropdown(row)
-    -- entries like Blizzard's: no radio circles, the selected one in yellow
+    -- entries: no radio circles, the selected one in yellow
     dd:SetupMenu(function(_, root)
         for _, o in ipairs(spec.options) do
             local text = o[1] == ESF:Get(spec) and NORMAL_FONT_COLOR:WrapTextInColorCode(o[2]) or o[2]
@@ -337,8 +381,9 @@ end
 
 local function BuildCustom(content, spec)
     local row = NewRow(content, spec)
+    row.labelX = LABEL_X
     local w = spec.create and spec.create(row)
-    AttachHover(row, spec, w or row, w and { w } or {})
+    if not spec.noLabel then AttachHover(row, spec, w or row, w and { w } or {}) end
     return row, function(on)
         if w and spec.update then spec.update(w, on) end
         SetLabelEnabled(row, on)
@@ -347,21 +392,25 @@ end
 
 local builders = { checkbox = BuildCheckbox, dropdown = BuildDropdown, slider = BuildSlider, custom = BuildCustom }
 
-local function BuildPanel()
-    local panel = CreateFrame("Frame")
-    panel.name = "ExtraSausage"
+local function NewCheckButton(parent)
+    local cb = CreateFrame("CheckButton", nil, parent)
+    cb:SetSize(30, 29)
+    if HasAtlas("checkbox-minimal") then
+        cb:SetNormalAtlas("checkbox-minimal")
+        cb:SetPushedAtlas("checkbox-minimal")
+        cb:SetCheckedTexture("checkmark-minimal")
+        cb:SetHighlightAtlas("checkbox-minimal", "ADD")
+        cb:GetHighlightTexture():SetAlpha(0.3)
+    else
+        cb:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
+        cb:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
+        cb:SetCheckedTexture("Interface\\Buttons\\UI-CheckBox-Check")
+        cb:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight", "ADD")
+    end
+    return cb
+end
 
-    -- fixed header: icon, title, version, separator line (like Blizzard's page title)
-    local icon = panel:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(24, 24)
-    icon:SetPoint("TOPLEFT", 10, -10)
-    icon:SetTexture(GetMeta(ADDON, "IconTexture") or "Interface\\Icons\\INV_Misc_Food_66")
-    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
-    title:SetPoint("LEFT", icon, "RIGHT", 8, 0)
-    title:SetText("ExtraSausage")
-    local version = panel:CreateFontString(nil, "ARTWORK", "GameFontDisable")
-    version:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 8, 2)
-    version:SetText("v" .. (GetMeta(ADDON, "Version") or "?"))
+local function NewDivider(panel, y)
     local line = panel:CreateTexture(nil, "ARTWORK")
     if HasAtlas("Options_HorizontalDivider") then
         line:SetAtlas("Options_HorizontalDivider", true)
@@ -369,25 +418,17 @@ local function BuildPanel()
         line:SetColorTexture(1, 1, 1, 0.15)
         line:SetHeight(1)
     end
-    line:SetPoint("TOPLEFT", 0, -42)
-    line:SetPoint("TOPRIGHT", -18, -42)
+    line:SetPoint("TOPLEFT", 0, y)
+    line:SetPoint("TOPRIGHT", -18, y)
+    return line
+end
 
-    -- scrolling area below the header (Blizzard's ScrollBox + MinimalScrollBar)
-    local scroll = CreateFrame("Frame", nil, panel, "WowScrollBox")
-    local bar = CreateFrame("EventFrame", nil, panel, "MinimalScrollBar")
-    scroll:SetPoint("TOPLEFT", 0, -50)
-    scroll:SetPoint("BOTTOMRIGHT", -24, 4)
-    bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 6, -4)
-    bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 6, 4)
-    local content = CreateFrame("Frame", nil, scroll)
-    content.scrollable = true   -- tells the ScrollBox this frame is what scrolls
-    content:SetSize(1, 1)
-    ScrollUtil.InitScrollBoxWithScrollBar(scroll, bar, CreateScrollBoxLinearView())
-
-    local y, prevKind = 0, nil
-    for _, spec in ipairs(ESF.rows) do
+-- Rows of a list, laid out top to bottom in `content`. Returns the height used.
+local function BuildRows(content, rows)
+    local y, prevKind = 6, nil
+    for _, spec in ipairs(rows) do
         if spec.kind == "section" then
-            y = y + (prevKind and SECTION_GAP or 10)
+            y = y + (prevKind and SECTION_GAP or 4)
             local header = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightLarge")
             header:SetPoint("TOPLEFT", HEADER_X, -y)
             header:SetText(spec.name)
@@ -408,16 +449,247 @@ local function BuildPanel()
         end
         prevKind = spec.kind
     end
+    return y
+end
+
+-- Scrolling area below a page header (Blizzard's ScrollBox + MinimalScrollBar).
+local function NewScrollArea(panel, top)
+    local scroll = CreateFrame("Frame", nil, panel, "WowScrollBox")
+    local bar = CreateFrame("EventFrame", nil, panel, "MinimalScrollBar")
+    scroll:SetPoint("TOPLEFT", 0, top)
+    scroll:SetPoint("BOTTOMRIGHT", -24, 4)
+    bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 6, -4)
+    bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 6, 4)
+    local content = CreateFrame("Frame", nil, scroll)
+    content.scrollable = true   -- tells the ScrollBox this frame is what scrolls
+    content:SetSize(1, 1)
+    ScrollUtil.InitScrollBoxWithScrollBar(scroll, bar, CreateScrollBoxLinearView())
+    return scroll, content
+end
+
+local function OnPageShow(scroll, content)
+    if content then content:SetWidth(scroll:GetWidth()) end
+    ESF:RefreshSettings()
+    if scroll then scroll:FullUpdate(ScrollBoxConstants.UpdateImmediately) end
+    C_Timer.After(0, function() ESF:RefreshSettings() end)   -- once positions are final
+end
+
+----------------------------------------------------------------------
+-- Module page (sub-entry): title + note on the left, Enable checkbox on the right, rows below
+----------------------------------------------------------------------
+local MODULE_HEADER_H = 58
+
+local function BuildModulePage(m)
+    local panel = CreateFrame("Frame")
+    panel.name = m.name
+
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
+    title:SetPoint("TOPLEFT", 10, -12)
+    title:SetText(m.name)
+    local note = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    note:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    note:SetText(m.note or m.desc or "")
+
+    -- master switch: right-aligned with the title, green "Enabled" / grey "Disabled"
+    local cb = NewCheckButton(panel)
+    cb:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -8)
+    local state = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    state:SetPoint("RIGHT", cb, "LEFT", -2, 0)
+    cb:SetScript("OnClick", function(self)
+        local on = self:GetChecked() and true or false
+        PlaySound(on and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+        Set(m, on)
+    end)
+    cb:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText(m.name, 1, 1, 1)
+        GameTooltip:AddLine(m.tooltip or m.desc, nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    cb:SetScript("OnLeave", GameTooltip_Hide)
+    table.insert(rowObjects, { spec = m, Refresh = function()
+        local on = m:IsOn()
+        cb:SetChecked(on)
+        state:SetText(on and "Enabled" or "Disabled")
+        if on then state:SetTextColor(GREEN_FONT_COLOR:GetRGB()) else state:SetTextColor(0.5, 0.5, 0.5) end
+    end })
+
+    NewDivider(panel, -MODULE_HEADER_H)
+
+    local scroll, content = NewScrollArea(panel, -MODULE_HEADER_H - 8)
+    local y = BuildRows(content, m.rows)
+    if #m.rows == 0 then
+        local none = content:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+        none:SetPoint("TOPLEFT", LABEL_X, -16)
+        none:SetText("No further settings.")
+        y = 40
+    end
     content:SetHeight(y + 16)
 
-    panel:SetScript("OnShow", function()
-        content:SetWidth(scroll:GetWidth())
-        ESF:RefreshSettings()
-        scroll:FullUpdate(ScrollBoxConstants.UpdateImmediately)
-        C_Timer.After(0, function() ESF:RefreshSettings() end)   -- once positions are final
+    panel:SetScript("OnShow", function() OnPageShow(scroll, content) end)
+    return panel
+end
+
+----------------------------------------------------------------------
+-- Main page: addon title + version, one tile per module
+-- (click = open the module's page, checkbox = enable/disable)
+----------------------------------------------------------------------
+local TILE_COLUMNS = 2
+local TILE_H = 92
+local TILE_GAP = 14
+local TILE_TOP = 86          -- first tile row, from the top of the page
+local TILE_ICON = 56
+local TILE_PAD = 16          -- inner padding (icon left, text top)
+local TILE_TEXT_RIGHT = 44   -- title and description end this far from the right edge (checkbox column)
+local PLACEHOLDER_ICON = "Interface\\Icons\\INV_Misc_Bag_08"
+
+local function BuildTile(parent, m)
+    local tile = CreateFrame("Button", nil, parent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    tile:SetHeight(TILE_H)
+    tile:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 14,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+
+    local icon = tile:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(TILE_ICON, TILE_ICON)
+    icon:SetPoint("LEFT", TILE_PAD, 0)
+    icon:SetTexture(m.icon or PLACEHOLDER_ICON)
+    icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)   -- crop the icon's built-in border
+
+    -- placeholder marker: dark banner with "PLACEHOLDER" across the bottom of the icon
+    local banner, bannerText
+    if not m.icon then
+        banner = tile:CreateTexture(nil, "OVERLAY")
+        banner:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT")
+        banner:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT")
+        banner:SetHeight(12)
+        banner:SetColorTexture(0.08, 0.08, 0.08, 0.9)
+        bannerText = tile:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local fontFile, _, fontFlags = bannerText:GetFont()
+        bannerText:SetFont(fontFile, 7, fontFlags)
+        bannerText:SetPoint("CENTER", banner, "CENTER", 0, 0)
+        bannerText:SetText("PLACEHOLDER")
+    end
+
+    local title = tile:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", TILE_PAD + TILE_ICON + 14, -TILE_PAD)
+    title:SetPoint("RIGHT", -TILE_TEXT_RIGHT, 0)
+    title:SetJustifyH("LEFT")
+    title:SetWordWrap(false)
+    title:SetText(m.name)
+
+    local desc = tile:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    desc:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
+    desc:SetPoint("RIGHT", -TILE_TEXT_RIGHT, 0)   -- same right edge as the title, clear of the checkbox
+    desc:SetJustifyH("LEFT")
+    desc:SetJustifyV("TOP")
+    if desc.SetMaxLines then desc:SetMaxLines(3) end
+    desc:SetText(m.desc or "")
+
+    -- enable/disable: the same checkbox as on the module pages, centered on the title line
+    local cb = NewCheckButton(tile)
+    cb:SetPoint("RIGHT", tile, "TOPRIGHT", -8, -TILE_PAD - title:GetStringHeight() / 2)
+    cb:SetFrameLevel(tile:GetFrameLevel() + 2)
+    local function ShowCheckTip(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(m:IsOn() and "Click to disable" or "Click to enable", 1, 1, 1)
+        GameTooltip:Show()
+    end
+    cb:SetScript("OnClick", function(self)
+        local on = self:GetChecked() and true or false
+        PlaySound(on and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF)
+        Set(m, on)
+        if GameTooltip:IsOwned(self) then ShowCheckTip(self) end   -- new state while still hovering
+    end)
+    cb:SetScript("OnEnter", ShowCheckTip)
+    cb:SetScript("OnLeave", GameTooltip_Hide)
+
+    local hl = tile:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetPoint("TOPLEFT", 4, -4)
+    hl:SetPoint("BOTTOMRIGHT", -4, 4)
+    hl:SetColorTexture(1, 1, 1, 0.08)
+
+    tile:SetScript("OnClick", function()
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION)
+        if m.category then Settings.OpenToCategory(m.category:GetID()) end
     end)
 
-    ESF.category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+    table.insert(rowObjects, { spec = m, Refresh = function()
+        local on = m:IsOn()
+        icon:SetDesaturated(not on)
+        icon:SetAlpha(on and 1 or 0.5)
+        if banner then
+            banner:SetAlpha(on and 1 or 0.5)
+            bannerText:SetAlpha(on and 1 or 0.5)
+        end
+        title:SetFontObject(on and GameFontNormalLarge or GameFontDisableLarge)
+        if on then desc:SetTextColor(0.85, 0.85, 0.85) else desc:SetTextColor(0.4, 0.4, 0.4) end
+        tile:SetBackdropColor(on and 0.12 or 0.05, on and 0.10 or 0.05, on and 0.05 or 0.05, on and 0.9 or 0.6)
+        if on then tile:SetBackdropBorderColor(1, 0.82, 0) else tile:SetBackdropBorderColor(0.35, 0.35, 0.35) end
+        cb:SetChecked(on)
+    end })
+    return tile
+end
+
+local function BuildMainPage()
+    local panel = CreateFrame("Frame")
+    panel.name = "ExtraSausage"
+
+    -- header: icon, title, version, separator line
+    local icon = panel:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(32, 32)
+    icon:SetPoint("TOPLEFT", 10, -5)
+    icon:SetTexture(GetMeta(ADDON, "IconTexture") or "Interface\\Icons\\INV_Misc_Food_66")
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
+    local fontFile, _, fontFlags = title:GetFont()
+    title:SetFont(fontFile, 28, fontFlags)
+    title:SetShadowColor(0, 0, 0, 1)
+    title:SetShadowOffset(1, -1)
+    title:SetPoint("LEFT", icon, "RIGHT", 10, 0)
+    title:SetText("ExtraSausage")
+    local version = panel:CreateFontString(nil, "ARTWORK", "GameFontDisable")
+    version:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 8, 5)   -- on the title's baseline
+    version:SetText("v" .. (GetMeta(ADDON, "Version") or "?"))
+
+    title:SetTextColor(NORMAL_FONT_COLOR:GetRGB())
+    NewDivider(panel, -42)
+
+    local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")   -- same size as the tile descriptions
+    hint:SetPoint("TOPLEFT", 10, -54)
+    hint:SetText("Click a module to open its settings. The checkbox enables or disables it.")
+
+    local tiles = {}
+    for _, m in ipairs(ESF.modules) do table.insert(tiles, BuildTile(panel, m)) end
+
+    local function Layout()
+        local width = panel:GetWidth() - 20 - 18
+        if width <= 0 then return end
+        local w = (width - (TILE_COLUMNS - 1) * TILE_GAP) / TILE_COLUMNS
+        for i, tile in ipairs(tiles) do
+            local col, row = (i - 1) % TILE_COLUMNS, math.floor((i - 1) / TILE_COLUMNS)
+            tile:ClearAllPoints()
+            tile:SetWidth(w)
+            tile:SetPoint("TOPLEFT", 10 + col * (w + TILE_GAP), -TILE_TOP - row * (TILE_H + TILE_GAP))
+        end
+    end
+    panel:SetScript("OnSizeChanged", Layout)
+    panel:SetScript("OnShow", function()
+        Layout()
+        OnPageShow()
+    end)
+    return panel
+end
+
+local function BuildPanel()
+    local main = BuildMainPage()
+    ESF.category = Settings.RegisterCanvasLayoutCategory(main, main.name)
+    for _, m in ipairs(ESF.modules) do
+        local page = BuildModulePage(m)
+        m.category = Settings.RegisterCanvasLayoutSubcategory(ESF.category, page, page.name)
+    end
     Settings.RegisterAddOnCategory(ESF.category)
 end
 
