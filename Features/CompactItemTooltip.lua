@@ -66,6 +66,8 @@ local RULES = {
         function(v) return { { "spellDamage", v }, { "spellHealing", v } } end },
     { "^Increases healing done by up to (%d+) and damage done by up to (%d+) for all magical spells and effects%.$",
         function(heal, dmg) return { { "spellDamage", dmg }, { "spellHealing", heal } } end },
+    { "^Increases damage done by magical spells and effects by up to (%d+)%.$",
+        function(v) return { { "spellDamage", v } } end },
     { "^Increases damage done by (%a+) spells and effects by up to (%d+)%.$",
         function(school, v) if SCHOOLS[school] then return { { "spellDamage", v, school } } end end },
     { "^Increases healing done by spells and effects by up to (%d+)%.$", function(v) return { { "spellHealing", v } } end },
