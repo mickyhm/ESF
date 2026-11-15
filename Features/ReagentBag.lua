@@ -95,6 +95,7 @@ for i = 1, NUM_CONTAINER_FRAMES or 13 do HookFrame(_G["ContainerFrame" .. i]) en
 local mod = ESF:Module({
     name = "Bag Options", key = "bagOptions",
     desc = "Small and simple tweaks to bags",
+    note = "Small tweaks to how bags behave.",
 })
 
 ESF:Checkbox({

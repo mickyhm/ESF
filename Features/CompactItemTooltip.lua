@@ -251,6 +251,7 @@ local mod
 mod = ESF:Module({
     name = "Compact Item Tooltip", key = "compactItemTooltip",
     desc = "Shorter item tooltips for many effects",
+    note = "Rewrites long item effects into short lines, like +10 Spell Damage.",
     -- the patterns only match the English tooltip text
     unavailable = function()
         return strsub(ESF:GetLocale(), 1, 2) ~= "en" and "English client only" or nil

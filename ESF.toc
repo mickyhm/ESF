@@ -17,3 +17,4 @@ Features\CompactItemTooltip.lua
 Features\ReagentBag.lua
 Features\BagOrder.lua
 Features\LootRollFrame.lua
+Features\BetterLFGFrame.lua

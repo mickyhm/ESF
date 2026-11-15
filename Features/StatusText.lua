@@ -121,6 +121,7 @@ end)
 local mod = ESF:Module({
     name = "Minimal Status Text", key = "statusText",
     desc = "Health and power bars show only the current value",
+    note = "Health and power bars show only the current value, not value / maximum.",
 })
 
 local function Register(name, key, label)
