@@ -6,12 +6,15 @@ local ADDON, ESF = ...
 --
 -- The main page shows a tile per module (click = enable/disable). Every module gets its own
 -- sub-entry with an Enable checkbox in the page header and the module's rows below it.
---   ESF:Module{ name, key, desc [, default, note, tooltip, icon, perChar, onChange] }
+--   ESF:Module{ name, key, desc [, default, note, tooltip, icon, perChar, onChange, unavailable] }
 --       starts a module; the rows that follow belong to it. ESF:Module(name) continues an
 --       existing one (e.g. a second file adding rows). desc goes on the tile, note (default:
 --       desc) under the page title. Switching the module runs onChange(on) and then the
 --       onChange of all its rows again, so features can use value and module:IsOn().
 --       Rows of a disabled module are greyed out; their saved values stay as they are.
+--       unavailable (text, or a function returning text or nil, called at load): the module
+--       can't be enabled on this client; the text replaces desc on the tile and the settings
+--       on the page. The saved value is left untouched.
 --
 -- Row specs (all optional fields in brackets):
 --   ESF:Section(name [, note])                     white header, small grey description below it
@@ -43,7 +46,7 @@ local function AddRow(kind, spec)
 end
 
 local function ModuleIsOn(self)
-    return ESF:Get(self) and true or false
+    return not self.unavailable and ESF:Get(self) and true or false
 end
 
 function ESF:Module(spec)
@@ -92,6 +95,11 @@ function ESF:SetSectionNote(section, note)
     self:Section(section, note)
 end
 
+-- Client locale, or the one set with /esf locale for testing.
+function ESF:GetLocale()
+    return ESFDB and ESFDB.testLocale or GetLocale()
+end
+
 -- Saved-variables table a spec's value lives in.
 function ESF:Store(spec)
     return spec.perChar and ESFCharDB or ESFDB
@@ -120,7 +128,7 @@ local function HasAtlas(name)
 end
 
 local function IsEnabled(spec)
-    if spec.module and not ESF:Get(spec.module) then return false end
+    if spec.module and not spec.module:IsOn() then return false end
     if spec.parent and not IsEnabled(spec.parent) then return false end
     if spec.parent and spec.parent.key and not spec.enabledIf and not ESF:Get(spec.parent) then return false end
     if spec.enabledIf and not spec.enabledIf() then return false end
@@ -134,6 +142,7 @@ function ESF:RefreshSettings()
 end
 
 local function Set(spec, value)
+    if spec.unavailable then return end
     ESF:Store(spec)[spec.key] = value
     if spec.onChange then spec.onChange(value) end
     if spec.kind == "module" then
@@ -493,6 +502,7 @@ local function BuildModulePage(m)
     -- master switch: right-aligned with the title, green "Enabled" / grey "Disabled"
     local cb = NewCheckButton(panel)
     cb:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -24, -8)
+    if cb.SetMotionScriptsWhileDisabled then cb:SetMotionScriptsWhileDisabled(true) end
     local state = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     state:SetPoint("RIGHT", cb, "LEFT", -2, 0)
     cb:SetScript("OnClick", function(self)
@@ -503,13 +513,15 @@ local function BuildModulePage(m)
     cb:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText(m.name, 1, 1, 1)
-        GameTooltip:AddLine(m.tooltip or m.desc, nil, nil, nil, true)
+        GameTooltip:AddLine(m.unavailable or m.tooltip or m.desc, nil, nil, nil, true)
         GameTooltip:Show()
     end)
     cb:SetScript("OnLeave", GameTooltip_Hide)
     table.insert(rowObjects, { spec = m, Refresh = function()
         local on = m:IsOn()
         cb:SetChecked(on)
+        cb:SetEnabled(not m.unavailable)
+        cb:GetNormalTexture():SetDesaturated(m.unavailable and true or false)
         state:SetText(on and "Enabled" or "Disabled")
         if on then state:SetTextColor(GREEN_FONT_COLOR:GetRGB()) else state:SetTextColor(0.5, 0.5, 0.5) end
     end })
@@ -517,12 +529,14 @@ local function BuildModulePage(m)
     NewDivider(panel, -MODULE_HEADER_H)
 
     local scroll, content = NewScrollArea(panel, -MODULE_HEADER_H - 8)
-    local y = BuildRows(content, m.rows)
-    if #m.rows == 0 then
+    local y
+    if m.unavailable or #m.rows == 0 then
         local none = content:CreateFontString(nil, "ARTWORK", "GameFontDisable")
         none:SetPoint("TOPLEFT", LABEL_X, -16)
-        none:SetText("No further settings.")
+        none:SetText(m.unavailable and (m.unavailable .. ".") or "No further settings.")
         y = 40
+    else
+        y = BuildRows(content, m.rows)
     end
     content:SetHeight(y + 16)
 
@@ -587,15 +601,20 @@ local function BuildTile(parent, m)
     desc:SetJustifyH("LEFT")
     desc:SetJustifyV("TOP")
     if desc.SetMaxLines then desc:SetMaxLines(3) end
-    desc:SetText(m.desc or "")
+    desc:SetText(m.unavailable or m.desc or "")
 
     -- enable/disable: the same checkbox as on the module pages, centered on the title line
     local cb = NewCheckButton(tile)
     cb:SetPoint("RIGHT", tile, "TOPRIGHT", -8, -TILE_PAD - title:GetStringHeight() / 2)
     cb:SetFrameLevel(tile:GetFrameLevel() + 2)
+    if cb.SetMotionScriptsWhileDisabled then cb:SetMotionScriptsWhileDisabled(true) end
     local function ShowCheckTip(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText(m:IsOn() and "Click to disable" or "Click to enable", 1, 1, 1)
+        if m.unavailable then
+            GameTooltip:SetText(m.unavailable, 1, 1, 1)
+        else
+            GameTooltip:SetText(m:IsOn() and "Click to disable" or "Click to enable", 1, 1, 1)
+        end
         GameTooltip:Show()
     end
     cb:SetScript("OnClick", function(self)
@@ -630,6 +649,8 @@ local function BuildTile(parent, m)
         tile:SetBackdropColor(on and 0.12 or 0.05, on and 0.10 or 0.05, on and 0.05 or 0.05, on and 0.9 or 0.6)
         if on then tile:SetBackdropBorderColor(1, 0.82, 0) else tile:SetBackdropBorderColor(0.35, 0.35, 0.35) end
         cb:SetChecked(on)
+        cb:SetEnabled(not m.unavailable)
+        cb:GetNormalTexture():SetDesaturated(m.unavailable and true or false)
     end })
     return tile
 end
@@ -702,16 +723,33 @@ loader:SetScript("OnEvent", function(self, _, name)
     ESFDB = ESFDB or {}
     ESFCharDB = ESFCharDB or {}
     for _, fn in ipairs(ESF.onLoad) do fn() end
+    for _, m in ipairs(ESF.modules) do
+        if type(m.unavailable) == "function" then m.unavailable = m.unavailable() end
+    end
     for _, spec in ipairs(ESF.features) do
         local db = ESF:Store(spec)
         if db[spec.key] == nil then db[spec.key] = spec.default end
-        if spec.onChange then spec.onChange(db[spec.key]) end
+        local value = db[spec.key]
+        if spec.unavailable then value = false end
+        if spec.onChange then spec.onChange(value) end
     end
     BuildPanel()
 end)
 
 -- Sub-commands: ESF.commands.name = function(rest) ... end  ->  /esf name rest
 ESF.commands = {}
+
+-- /esf locale deDE: act as if the client used that locale (reloads the UI). /esf locale: back to normal.
+ESF.commands.locale = function(rest)
+    local code = strmatch(rest or "", "^(%a%a%u%u)$")
+    if rest ~= "" and not code then
+        print("ESF: usage: /esf locale deDE (or /esf locale to reset)")
+        return
+    end
+    ESFDB.testLocale = code
+    print("ESF: locale set to " .. (code or GetLocale()) .. ", reloading.")
+    ReloadUI()
+end
 
 SLASH_ESF1 = "/esf"
 SlashCmdList.ESF = function(msg)

@@ -2,7 +2,7 @@
 ## Title: ExtraSausage
 ## Notes: Quality-of-life tweaks for WoW Forever. Each module can be turned on or off on its own.
 ## Author: mickyhm
-## Version: 0.5.1
+## Version: 0.5.2
 ## X-License: GPL-3.0
 ## IconTexture: Interface\Icons\INV_Misc_Food_66
 ## SavedVariables: ESFDB

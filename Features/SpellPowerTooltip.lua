@@ -83,5 +83,9 @@ ESF:Module({
     desc = "Short spell damage and healing lines on item tooltips",
     note = "Item tooltips show spell damage and healing as short stat lines.",
     tooltip = 'Shows e.g. "+30 Spell Damage" and "+30 Spell Healing" instead of the long "Equip: Increases ..." text.',
+    -- the patterns only match the English tooltip text
+    unavailable = function()
+        return strsub(ESF:GetLocale(), 1, 2) ~= "en" and "English client only" or nil
+    end,
     onChange = function(on) enabled = on end,
 })
