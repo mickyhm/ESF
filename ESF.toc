@@ -13,7 +13,7 @@ Features\StatusText.lua
 Features\RangeFinder.lua
 Features\ChatAutoHide.lua
 Features\DamageMeter.lua
-Features\SpellPowerTooltip.lua
+Features\CompactItemTooltip.lua
 Features\ReagentBag.lua
 Features\BagOrder.lua
 Features\LootRollFrame.lua
