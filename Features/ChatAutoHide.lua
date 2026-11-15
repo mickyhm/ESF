@@ -766,7 +766,7 @@ local enable = ESF:Module({
 
 local hideMode = ESF:Dropdown({
     key = "chatHideMode", label = "Hide", default = HIDE_TIMER, parent = enable,
-    enabledIf = Enabled,
+    enabledIf = Enabled, noRowTooltip = true,
     options = {
         { HIDE_MANUAL, "Manually", "Only the hide button hides the chat." },
         { HIDE_TIMER, "After Timer", "Hides the chat after the seconds below without activity." },
@@ -812,7 +812,7 @@ ESF:Custom({
 
 local wake = ESF:Dropdown({
     key = "chatWake", label = "Wake Up", default = WAKE_ALL, parent = enable,
-    enabledIf = Enabled,
+    enabledIf = Enabled, noRowTooltip = true,
     options = {
         { WAKE_ALL, "Mouse Over, Blinking or New Message", "New messages in the selected tab also restart the timer." },
         { WAKE_BLINK, "Mouse Over or Blinking" },

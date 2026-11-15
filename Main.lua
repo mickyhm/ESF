@@ -19,7 +19,7 @@ local ADDON, ESF = ...
 -- Row specs (all optional fields in brackets):
 --   ESF:Section(name [, note])                     white header, small grey description below it
 --   ESF:Checkbox{ key, label, default [, tooltip, perChar, onChange, parent, enabledIf] }
---   ESF:Dropdown{ key, label, default, options = { {value, text [, tooltip]}, ... } [, ...] }
+--   ESF:Dropdown{ key, label, default, options = { {value, text [, tooltip]}, ... } [, noRowTooltip, ...] }
 --   ESF:Slider{ key, label, default, min, max, step [, format, ...] }
 --   ESF:Custom{ label [, tooltip, create, update, parent, enabledIf, noLabel] }
 --       create(row) -> widget   builds the control once, placed in the control column of `row`
@@ -169,7 +169,8 @@ end
 -- Row hover: from the left edge up to and including the control the row is
 -- highlighted and shows its tooltip; right of the control nothing happens.
 -- `frames` are the control's mouse-enabled parts (they sit on top of the hover area).
-local function AttachHover(row, spec, control, frames)
+-- Over the `quiet` frames the row is highlighted but shows no tooltip (quiet = true: never).
+local function AttachHover(row, spec, control, frames, quiet)
     local hover = CreateFrame("Frame", nil, row)
     hover:SetPoint("TOPLEFT")
     hover:SetPoint("BOTTOMLEFT")
@@ -182,10 +183,18 @@ local function AttachHover(row, spec, control, frames)
     hl:SetColorTexture(1, 1, 1, 0.07)
     hl:Hide()
 
+    local function OverQuiet()
+        if quiet == true then return true end
+        for _, f in ipairs(quiet or {}) do
+            if f:IsMouseOver() then return true end
+        end
+        return false
+    end
+
     local function Update()
         local over = hover:IsMouseOver()
         hl:SetShown(over)
-        if over then
+        if over and not OverQuiet() then
             if not GameTooltip:IsOwned(row) then ShowTooltip(row, spec) end
         elseif GameTooltip:IsOwned(row) then
             GameTooltip:Hide()
@@ -344,7 +353,7 @@ local function BuildDropdown(content, spec)
         end
     end
 
-    AttachHover(row, spec, nextB, { dd, prev, nextB })
+    AttachHover(row, spec, nextB, { dd, prev, nextB }, spec.noRowTooltip or nil)
     return row, function(on)
         -- the left arrow starts where checkboxes start (Blizzard's template may anchor the
         -- dropdown itself there instead); measured once the page is laid out
