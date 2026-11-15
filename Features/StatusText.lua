@@ -62,6 +62,13 @@ local function Refresh(bar)
         SetBlizzAlpha(bar, 1)
         return
     end
+    -- Dead units: leave Blizzard's "Dead" text alone.
+    local unit = bar.unit or groupOf[bar]
+    if UnitIsDead(unit) then
+        fs:Hide()
+        SetBlizzAlpha(bar, 1)
+        return
+    end
     if SetValueText(fs, bar:GetValue()) then
         fs:Show()
         SetBlizzAlpha(bar, 0)
