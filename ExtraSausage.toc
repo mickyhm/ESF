@@ -4,7 +4,7 @@
 ## Author: mickyhm
 ## Version: 0.6.2
 ## X-License: GPL-3.0
-## IconTexture: Interface\AddOns\ESF\Textures\ESF_Icon_NoBorder
+## IconTexture: Interface\AddOns\ExtraSausage\Textures\ESF_Icon_NoBorder
 ## SavedVariables: ESFDB
 ## SavedVariablesPerCharacter: ESFCharDB
 
