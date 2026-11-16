@@ -298,7 +298,7 @@ ev:SetScript("OnEvent", function(_, event, name)
 end)
 
 ESF:Module({
-    name = "Damage Meter Button", key = "dmMinimapButton",
+    name = "Hide Damage Meter", key = "dmMinimapButton",
     desc = "Minimap button that shows or hides the damage meter completely",
     note = "A minimap button: click shows the damage meter maximized or hides it completely.",
     onChange = function(on)

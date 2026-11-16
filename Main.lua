@@ -95,9 +95,9 @@ function ESF:SetSectionNote(section, note)
     self:Section(section, note)
 end
 
--- Client locale, or the one set with /esf locale for testing.
+-- Client locale.
 function ESF:GetLocale()
-    return ESFDB and ESFDB.testLocale or GetLocale()
+    return GetLocale()
 end
 
 -- Saved-variables table a spec's value lives in.
@@ -672,7 +672,8 @@ local function BuildMainPage()
     local icon = panel:CreateTexture(nil, "ARTWORK")
     icon:SetSize(32, 32)
     icon:SetPoint("TOPLEFT", 10, -5)
-    icon:SetTexture(GetMeta(ADDON, "IconTexture") or "Interface\\Icons\\INV_Misc_Food_66")
+    -- test: transparent icon in the menu header only (addon list still uses the .toc IconTexture)
+    icon:SetTexture("Interface\\AddOns\\ESF\\Textures\\ESF_Icon_Transparent")
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightHuge")
     local fontFile, _, fontFlags = title:GetFont()
     title:SetFont(fontFile, 28, fontFlags)
@@ -730,6 +731,7 @@ loader:SetScript("OnEvent", function(self, _, name)
     self:UnregisterEvent("ADDON_LOADED")
 
     ESFDB = ESFDB or {}
+    ESFDB.testLocale = nil   -- left over from the removed /esf locale test command
     ESFCharDB = ESFCharDB or {}
     for _, fn in ipairs(ESF.onLoad) do fn() end
     for _, m in ipairs(ESF.modules) do
@@ -747,18 +749,6 @@ end)
 
 -- Sub-commands: ESF.commands.name = function(rest) ... end  ->  /esf name rest
 ESF.commands = {}
-
--- /esf locale deDE: act as if the client used that locale (reloads the UI). /esf locale: back to normal.
-ESF.commands.locale = function(rest)
-    local code = strmatch(rest or "", "^(%a%a%u%u)$")
-    if rest ~= "" and not code then
-        print("ESF: usage: /esf locale deDE (or /esf locale to reset)")
-        return
-    end
-    ESFDB.testLocale = code
-    print("ESF: locale set to " .. (code or GetLocale()) .. ", reloading.")
-    ReloadUI()
-end
 
 SLASH_ESF1 = "/esf"
 SlashCmdList.ESF = function(msg)
