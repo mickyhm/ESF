@@ -73,7 +73,8 @@ local RULES = {
     { "^Increases healing done by spells and effects by up to (%d+)%.$", function(v) return { { "spellHealing", v } } end },
     { "^Improves your chance to hit with spells by (%d+)%%%.$", function(v) return { { "spellHit", v } } end },
     { "^Improves your chance to get a critical strike with spells by (%d+)%%%.$", function(v) return { { "spellCrit", v } } end },
-    { "^Restores (%d+) mana per 5 sec%.$", function(v) return { { "mp5", v } } end },
+    -- capitalization differs between items, e.g. "mana per 5 sec." and "Mana per 5 Sec."
+    { "^Restores (%d+) [Mm]ana [Pp]er 5 [Ss]ec%.$", function(v) return { { "mp5", v } } end },
     { "^Increased Defense %+(%d+)%.$", function(v) return { { "defense", v } } end },
     { "^Increases your chance to dodge an attack by (%d+)%%%.$", function(v) return { { "dodge", v } } end },
     { "^Increases your chance to parry an attack by (%d+)%%%.$", function(v) return { { "parry", v } } end },
@@ -127,8 +128,43 @@ end
 
 local written = setmetatable({}, { __mode = "k" })   -- FontString -> text we set on it
 
+-- Two stats in one tooltip line are split by a line break, which has no gap between the rows.
+-- Separate tooltip lines are 2 px apart, so those lines get the same spacing until the tooltip
+-- is cleared (the FontStrings are reused for other tooltips).
+local LINE_GAP = 2
+local spaced = {}   -- tooltip -> { FontString -> original spacing }
+
+local function ResetSpacing(tooltip)
+    local list = spaced[tooltip]
+    if not list then return end
+    for fs, gap in pairs(list) do fs:SetSpacing(gap) end
+    spaced[tooltip] = nil
+end
+
+local function SetLine(tooltip, fs, text)
+    local list = spaced[tooltip]
+    if strfind(text, "\n", 1, true) then
+        if not list then
+            list = {}
+            spaced[tooltip] = list
+        end
+        if list[fs] == nil then list[fs] = fs:GetSpacing() end
+        fs:SetSpacing(LINE_GAP)
+    elseif list and list[fs] ~= nil then
+        fs:SetSpacing(list[fs])
+        list[fs] = nil
+    end
+    fs:SetText(text)
+end
+
+local hooked = {}
+
 local function OnItemTooltip(tooltip)
     if not active then return end   -- hooks can't be removed, so the state is checked here
+    if not hooked[tooltip] and tooltip.HookScript then
+        hooked[tooltip] = true
+        tooltip:HookScript("OnTooltipCleared", ResetSpacing)
+    end
     local name = tooltip.GetName and tooltip:GetName()
     if not name then return end
 
@@ -195,14 +231,14 @@ local function OnItemTooltip(tooltip)
             local slot = first
             for k = 1, slots do
                 local fs = lines[slot].fs
-                fs:SetText(texts[k])
+                SetLine(tooltip, fs, texts[k])
                 fs:SetTextColor(r, g, b)
                 written[fs] = texts[k]
                 slot = slot + 1
             end
             for k, l in ipairs(others) do
                 local fs = lines[slot].fs
-                fs:SetText(l.text)
+                SetLine(tooltip, fs, l.text)
                 fs:SetTextColor(unpack(otherColors[k]))
                 slot = slot + 1
             end
@@ -221,7 +257,7 @@ local function OnItemTooltip(tooltip)
                 local out = {}
                 for _, e in ipairs(entries) do out[#out + 1] = prefix .. e.text end
                 local text = table.concat(out, "\n")
-                l.fs:SetText(text)
+                SetLine(tooltip, l.fs, text)
                 written[l.fs] = text
                 changed = true
             elseif DEBUG_UNMATCHED then
