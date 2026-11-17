@@ -4,6 +4,11 @@ local ADDON, ESF = ...
 local DOT_GAP_ABOVE = -20
 local DOT_TEXTURE = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Dot.tga"
 local RADIUS_DEFAULT, RADIUS_MIN, RADIUS_MAX = 4, 2, 14
+local HANDLE_TEXTURE = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Move.tga"
+local HANDLE_SIZE, HANDLE_GAP = 36, 4
+local HANDLE_REACH = 4.5   -- from the handle center to the visible edge of the cross along the diagonal
+local HANDLE_DISTANCE = 3   -- multiplier on the minimum distance from the dot
+local TICK_SIZE, TICK_STEP = 2, 6.5   -- screen pixels (step is per axis)
 
 local enabled = { Hostile = false, Friendly = false }
 local unlocked = false
@@ -86,9 +91,12 @@ local function Radius()
     return (ESFDB and ESFDB.rangeDotRadius) or RADIUS_DEFAULT
 end
 
+local UpdateHandle
+
 local function ApplySize()
     local r = Radius()
     dot:SetSize(r * 2, r * 2)
+    if UpdateHandle then UpdateHandle() end
 end
 ApplySize()
 
@@ -144,6 +152,83 @@ dot:SetScript("OnDragStop", function(self)
     end
     ApplyPosition()
 end)
+
+----------------------------------------------------------------------
+-- Move handle (visible while unlocked)
+----------------------------------------------------------------------
+local handle = CreateFrame("Frame", "ESFRangeDotHandle", dot)
+handle:SetSize(HANDLE_SIZE, HANDLE_SIZE)
+handle:EnableMouse(true)
+handle:RegisterForDrag("LeftButton")
+handle:Hide()
+
+local handleTex = handle:CreateTexture(nil, "ARTWORK")
+handleTex:SetAllPoints()
+handleTex:SetTexture(HANDLE_TEXTURE)
+handleTex:SetAlpha(0.85)
+
+local ticks = {}
+local function GetTick(i)
+    local tick = ticks[i]
+    if not tick then
+        tick = handle:CreateTexture(nil, "ARTWORK")
+        tick:SetColorTexture(0.75, 0.75, 0.75, 0.5)
+        ticks[i] = tick
+    end
+    return tick
+end
+
+-- Sits diagonally up and right of the dot, flipped when that side would leave the screen.
+UpdateHandle = function()
+    handle:SetShown(unlocked)
+    if not unlocked then return end
+    local root2 = math.sqrt(2)
+    local px = (PixelUtil and PixelUtil.GetPixelToUIUnitFactor and PixelUtil.GetPixelToUIUnitFactor() or 1)
+        / dot:GetEffectiveScale()
+    local r, R = Radius(), HANDLE_SIZE / 2
+    local half = TICK_SIZE * px * root2 / 2   -- half a tick along the diagonal
+    local dist = (r + R + HANDLE_GAP) * HANDLE_DISTANCE
+    -- The visible gaps (dot to first tick, tick to tick, last tick to handle) are all equal.
+    -- Steps are whole screen pixels per axis so the ticks stay evenly spaced.
+    local free = dist - r - HANDLE_REACH + 2 * half
+    local n = math.max(1, math.floor(free / (TICK_STEP * px * root2) - 1 + 0.5))
+    local s = math.max(1, math.floor(free / (n + 1) / (root2 * px) + 0.5))
+    local c = s * px * root2
+    local first = math.floor((r + c - half) / (root2 * px) + 0.5)
+    local d = math.floor((r + (n + 1) * c + HANDLE_REACH - 2 * half) / (root2 * px) + 0.5) * px
+    local sx, sy = 1, 1
+    local cx, cy = dot:GetCenter()
+    if cx then
+        local k = UIParent:GetEffectiveScale() / dot:GetEffectiveScale()
+        local reach = d + R
+        if cx + reach > UIParent:GetWidth() * k then sx = -1 end
+        if cy + reach > UIParent:GetHeight() * k then sy = -1 end
+    end
+    handle:ClearAllPoints()
+    handle:SetPoint("CENTER", dot, "CENTER", d * sx, d * sy)
+
+    for i = 1, n do
+        local tick = GetTick(i)
+        local off = (first + (i - 1) * s) * px
+        tick:SetSize(TICK_SIZE * px, TICK_SIZE * px)
+        tick:ClearAllPoints()
+        tick:SetPoint("CENTER", dot, "CENTER", off * sx, off * sy)
+        tick:Show()
+    end
+    for i = n + 1, #ticks do ticks[i]:Hide() end
+end
+
+handle:SetScript("OnDragStart", function()
+    dot:GetScript("OnDragStart")(dot)
+    handle:SetScript("OnUpdate", UpdateHandle)
+end)
+handle:SetScript("OnDragStop", function()
+    handle:SetScript("OnUpdate", nil)
+    dot:GetScript("OnDragStop")(dot)
+    UpdateHandle()
+end)
+handle:SetScript("OnEnter", function() handleTex:SetAlpha(1) end)
+handle:SetScript("OnLeave", function() handleTex:SetAlpha(0.85) end)
 
 ----------------------------------------------------------------------
 -- Range logic
@@ -366,16 +451,6 @@ end
 Register("Hostile", "Hostile Target", "Shows the dot when the chosen ability is out of range of a hostile target.")
 Register("Friendly", "Friendly Target", "Shows the dot when the chosen ability is out of range of a friendly target.")
 
-ESF:Checkbox({
-    key = "rangeUnlock", label = "Test and Unlock", default = false,
-    tooltip = "Shows the dot and lets you drag it to a new position.",
-    onChange = function(on)
-        unlocked = on and mod:IsOn()
-        dot:EnableMouse(unlocked)
-        Refresh()
-    end,
-})
-
 ESF:Slider({
     key = "rangeDotRadius", label = "Dot Radius", default = RADIUS_DEFAULT,
     min = RADIUS_MIN, max = RADIUS_MAX, step = 1,
@@ -397,5 +472,17 @@ ESF:Custom({
             ReloadUI()
         end)
         return btn
+    end,
+})
+
+-- Keep this as the last row.
+ESF:Checkbox({
+    key = "rangeUnlock", label = "Test and Unlock", default = false,
+    tooltip = "Shows the dot and lets you drag it to a new position.",
+    onChange = function(on)
+        unlocked = on and mod:IsOn()
+        dot:EnableMouse(unlocked)
+        UpdateHandle()
+        Refresh()
     end,
 })

@@ -645,7 +645,7 @@ local function BuildTile(parent, m)
         if m.category then Settings.OpenToCategory(m.category:GetID()) end
     end)
 
-    table.insert(rowObjects, { spec = m, Refresh = function()
+    local function RefreshTile()
         local on = m:IsOn()
         icon:SetDesaturated(not on)
         icon:SetAlpha(on and 1 or 0.5)
@@ -660,7 +660,10 @@ local function BuildTile(parent, m)
         cb:SetChecked(on)
         cb:SetEnabled(not m.unavailable)
         cb:GetNormalTexture():SetDesaturated(m.unavailable and true or false)
-    end })
+    end
+    table.insert(rowObjects, { spec = m, Refresh = RefreshTile })
+    -- The backdrop is only built on the first size change and then resets its colors.
+    tile:HookScript("OnSizeChanged", RefreshTile)
     return tile
 end
 
