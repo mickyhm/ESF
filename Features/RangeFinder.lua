@@ -65,7 +65,8 @@ end
 -- anchored to TargetFrame so it follows that frame)
 ----------------------------------------------------------------------
 local dot = CreateFrame("Frame", "ESFRangeDot", UIParent)
-dot:SetFrameStrata("HIGH")
+dot:SetFrameStrata("MEDIUM")
+dot:SetFrameLevel(900)
 dot:SetClampedToScreen(true)
 dot:SetMovable(true)
 dot:RegisterForDrag("LeftButton")
