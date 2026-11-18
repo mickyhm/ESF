@@ -18,3 +18,4 @@ Features\DamageMeter.lua
 Features\RangeFinder.lua
 Features\ReagentBag.lua
 Features\BagOrder.lua
+Features\Misc.lua

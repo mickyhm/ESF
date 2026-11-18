@@ -19,6 +19,7 @@ local ADDON, ESF = ...
 -- Row specs (all optional fields in brackets):
 --   ESF:Section(name [, note])                     white header, small grey description below it
 --   ESF:Checkbox{ key, label, default [, tooltip, perChar, onChange, parent, enabledIf] }
+--       tooltip may be a function returning the text
 --   ESF:Dropdown{ key, label, default, options = { {value, text [, tooltip]}, ... } [, noRowTooltip, ...] }
 --   ESF:Slider{ key, label, default, min, max, step [, format, ...] }
 --   ESF:Custom{ label [, tooltip, create, update, parent, enabledIf, noLabel] }
@@ -162,7 +163,9 @@ local function ShowTooltip(row, spec)
     GameTooltip:SetOwner(row, "ANCHOR_NONE")
     GameTooltip:SetPoint("BOTTOMLEFT", row.tipAnchor, "TOPLEFT", -14, -2)
     GameTooltip:SetText(spec.label or "", 1, 1, 1)
-    if spec.tooltip then GameTooltip:AddLine(spec.tooltip, nil, nil, nil, true) end
+    local tip = spec.tooltip
+    if type(tip) == "function" then tip = tip() end
+    if tip then GameTooltip:AddLine(tip, nil, nil, nil, true) end
     GameTooltip:Show()
 end
 
