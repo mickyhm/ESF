@@ -262,7 +262,7 @@ mod = ESF:Module({
     note = "Small tweaks that don't need their own module.",
 })
 
-ESF:Section("Show on Mouseover", "Bars that touch each other appear together.")
+ESF:Section("Hide UI Elements", "Mouseover will bring the elements back temporarily.")
 
 local function BarCheckbox(key, label, tooltip)
     ESF:Checkbox({
