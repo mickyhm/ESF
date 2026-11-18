@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="EXTRASAUSAGE_HIDECHAT" header="EXTRASAUSAGE" category="ADDONS">
+		ExtraSausage_ToggleHideChat()
+	</Binding>
+</Bindings>

@@ -89,7 +89,7 @@ local function RemoveUnit(key)
     units[key] = nil
 end
 
--- /esf chatdebug: print what resets the hide timer (each reason at most once per second)
+-- /es chatdebug: print what resets the hide timer (each reason at most once per second)
 local debug = false
 local lastReason, lastPrint = nil, 0
 local ownPrint = false   -- our own chat output must not count as a new message
@@ -563,6 +563,31 @@ local function HideAllNow()
     end
 end
 
+-- Key binding (Bindings.xml): hides the chat like the hide button, or brings it back.
+local BINDING = "EXTRASAUSAGE_HIDECHAT"
+BINDING_NAME_EXTRASAUSAGE_HIDECHAT = "Hide Chat"
+
+local function BoundKeyText()
+    local key = GetBindingKey(BINDING)
+    return key and GetBindingText(key)
+end
+
+local function ChatHidden()
+    for _, u in pairs(units) do
+        if u.manual or u.alpha < 0.5 then return true end
+    end
+    return false
+end
+
+function ExtraSausage_ToggleHideChat()
+    if not Enabled() then return end
+    if ChatHidden() then
+        for _, u in pairs(units) do Reset(u, "key binding") end
+    else
+        HideAllNow()
+    end
+end
+
 -- A styled hide button, child of `anchor` (so it follows its position, alpha and visibility).
 local function NewHideButton(anchor)
     local b = CreateFrame("Button", nil, anchor)
@@ -605,7 +630,8 @@ local function NewHideButton(anchor)
         -- no tooltip while the button is faded out with the chat
         if self:GetEffectiveAlpha() > 0.5 then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(WHITE_FONT_COLOR:WrapTextInColorCode("Hide Chat"))
+            local key = BoundKeyText()
+            GameTooltip:SetText(WHITE_FONT_COLOR:WrapTextInColorCode("Hide Chat" .. (key and " (" .. key .. ")" or "")))
             GameTooltip:Show()
         end
         BarScript("OnEnter")
@@ -715,7 +741,7 @@ local function SettingsChanged()
     if hideButtons.main then UpdateHideButtons() end
 end
 
--- /esf testhide [seconds]: pretend the last activity was long ago, so the chat hides
+-- /es testhide [seconds]: pretend the last activity was long ago, so the chat hides
 -- after the given seconds (default 3). Mouse over or an open edit box still keeps it shown.
 ESF.commands.testhide = function(rest)
     if not (Enabled() and TimerMode()) then
@@ -728,7 +754,7 @@ ESF.commands.testhide = function(rest)
     Print("ESF: chat hides in " .. secs .. " s (move the mouse away from the chat)")
 end
 
--- /esf hidechat: hide the chat instantly (no fade). Works with both hide modes, also in instances.
+-- /es hidechat: hide the chat instantly (no fade). Works with both hide modes, also in instances.
 ESF.commands.hidechat = function()
     if not Enabled() then return end
     for _, u in pairs(units) do
@@ -840,11 +866,36 @@ ESF:Checkbox({
     onChange = function() if hideButtons.main then UpdateHideButtons() end end,
 })
 
+local bindingWatcher = CreateFrame("Frame")
+bindingWatcher:RegisterEvent("UPDATE_BINDINGS")
+bindingWatcher:SetScript("OnEvent", function()
+    if ESF.RefreshSettings then ESF:RefreshSettings() end
+end)
+
 ESF:Checkbox({
     key = "chatShowWhileTyping", label = "Show Chat While Typing", default = true, parent = enable,
     tooltip = "Pressing Enter brings the chat back. Off: only the input box appears.",
     enabledIf = Enabled,
     onChange = function() for _, u in pairs(units) do Apply(u) end end,
+})
+
+ESF:Custom({
+    label = "Keybind", parent = enable,
+    tooltip = "A key that fades the chat out, or brings it back while hidden. Click to open the keybindings (AddOns, ExtraSausage).",
+    enabledIf = Enabled,
+    create = function(row)
+        local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        btn:SetSize(200, 22)
+        btn:SetPoint("LEFT", row, "CENTER", -80, 0)
+        btn:SetScript("OnClick", function()
+            if Settings.KEYBINDINGS_CATEGORY_ID then Settings.OpenToCategory(Settings.KEYBINDINGS_CATEGORY_ID) end
+        end)
+        return btn
+    end,
+    update = function(btn, on)
+        btn:SetText(BoundKeyText() or "Not Bound")
+        btn:SetEnabled(on)
+    end,
 })
 
 -- seconds default, so the box never starts empty

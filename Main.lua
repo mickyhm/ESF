@@ -753,11 +753,13 @@ loader:SetScript("OnEvent", function(self, _, name)
     BuildPanel()
 end)
 
--- Sub-commands: ESF.commands.name = function(rest) ... end  ->  /esf name rest
+-- Sub-commands: ESF.commands.name = function(rest) ... end  ->  /es name rest
 ESF.commands = {}
 
-SLASH_ESF1 = "/esf"
-SlashCmdList.ESF = function(msg)
+BINDING_HEADER_EXTRASAUSAGE = "ExtraSausage"   -- heading of our entries in the keybindings
+
+SLASH_EXTRASAUSAGE1 = "/es"
+SlashCmdList.EXTRASAUSAGE = function(msg)
     local cmd, rest = strmatch(msg or "", "^%s*(%S+)%s*(.-)%s*$")
     if cmd then
         local fn = ESF.commands[strlower(cmd)]
