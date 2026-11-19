@@ -224,11 +224,29 @@ end
 -- Pet keybinds toggle autocast
 ----------------------------------------------------------------------
 -- The keys bound to Blizzard's pet action slots are overridden with our own
--- secure buttons that run /petautocasttoggle. Clicking the pet button still
--- casts. Bindings can't change in combat, so changes wait until it ends.
+-- secure buttons that run /petautocasttoggle, for the abilities the player
+-- picked. Abilities are stored by name, so all ranks and every pet with that
+-- ability count. Clicking the pet button still casts. Bindings can't change
+-- in combat, so changes wait until it ends.
 local NUM_PET_SLOTS = NUM_PET_ACTION_SLOTS or 10
+local SELECTED = "miscPetToggleAbilities"   -- name -> true
+local SEEN = "miscPetSeenAbilities"         -- name -> icon, autocast abilities of every pet so far
 
-local petToggle = false
+local function CharList(key)
+    if not ESFCharDB then return {} end
+    ESFCharDB[key] = ESFCharDB[key] or {}
+    return ESFCharDB[key]
+end
+
+local function RecordPetAbilities()
+    if not ESFCharDB then return end
+    local seen = CharList(SEEN)
+    for i = 1, NUM_PET_SLOTS do
+        local name, texture, isToken, _, autoCastAllowed = GetPetActionInfo(i)
+        if name and not isToken and autoCastAllowed then seen[name] = texture or true end
+    end
+end
+
 local petOwner = CreateFrame("Frame")
 local petButtons = {}
 for i = 1, NUM_PET_SLOTS do
@@ -249,10 +267,11 @@ local function UpdatePetBindings()
     petPending = false
 
     local wanted, parts = {}, {}
-    if petToggle and ESFDB and mod:IsOn() then
+    if ESFDB and mod:IsOn() then
+        local selected = CharList(SELECTED)
         for i = 1, NUM_PET_SLOTS do
             local name, _, isToken, _, autoCastAllowed = GetPetActionInfo(i)
-            if name and not isToken and autoCastAllowed then
+            if name and not isToken and autoCastAllowed and selected[name] then
                 for _, key in ipairs({ GetBindingKey("BONUSACTIONBUTTON" .. i) }) do
                     table.insert(wanted, { slot = i, key = key, name = name })
                     table.insert(parts, key .. "=" .. name)
@@ -290,6 +309,7 @@ petOwner:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
         C_Timer.After(0, UpdateBars)   -- Bartender enables its modules at login
     end
+    if event == "PET_BAR_UPDATE" or event == "UNIT_PET" or event == "PLAYER_LOGIN" then RecordPetAbilities() end
     UpdatePetBindings()
 end)
 
@@ -324,6 +344,7 @@ mod = ESF:Module({
     name = "Misc", key = "misc",
     desc = "Small tweaks that don't need their own module",
     note = "Small tweaks that don't need their own module.",
+    onChange = function() UpdatePetBindings() end,
 })
 
 ESF:Section("Hide UI Elements", "Mouseover will bring the elements back temporarily.")
@@ -346,12 +367,89 @@ BarCheckbox("miscHideStatusBars", "Experience Bar", "Also the second status bar,
 
 ESF:Section("Pet Bar")
 
-ESF:Checkbox({
-    key = "miscPetAutocastKeys", label = "Keybinds Toggle Autocast", default = false,
-    tooltip = "Keybinds of pet abilities that can autocast turn autocast on or off instead of using the ability. Clicking the button still uses it.",
-    onChange = function(on)
-        petToggle = on
-        UpdatePetBindings()
+local ABILITY_DROPDOWN_W = 218
+local PASS_ICON = "Interface\\Buttons\\UI-GroupLoot-Pass-"   -- the loot roll Pass button
+
+local function KnownAbilities()
+    local seen, selected, names = CharList(SEEN), CharList(SELECTED), {}
+    for name in pairs(seen) do table.insert(names, name) end
+    for name in pairs(selected) do
+        if not seen[name] then table.insert(names, name) end
+    end
+    table.sort(names)
+    return names
+end
+
+local function AbilitiesText()
+    local selected, chosen = CharList(SELECTED), {}
+    for _, name in ipairs(KnownAbilities()) do
+        if selected[name] then table.insert(chosen, name) end
+    end
+    if #chosen == 0 then return "None" end
+    if #chosen <= 2 then return table.concat(chosen, ", ") end
+    return #chosen .. " Abilities"
+end
+
+local function SetDropdownText(dd)
+    local text = AbilitiesText()
+    if dd.OverrideText then dd:OverrideText(text) else dd:SetText(text) end
+end
+
+ESF:Custom({
+    label = "Toggle Autocast for Selected Abilities", quietControl = true,
+    tooltip = "Keybinds of the selected pet abilities turn autocast on or off instead of using the ability. Clicking the button still uses it. The list shows the autocast abilities of every pet you had out on this character.",
+    create = function(row)
+        local dd = CreateFrame("DropdownButton", nil, row, "WowStyle1DropdownTemplate")
+        dd:SetWidth(ABILITY_DROPDOWN_W)
+        dd:SetPoint("LEFT", row.tipAnchor, "LEFT", 0, 0)
+        dd:SetupMenu(function(_, root)
+            local names = KnownAbilities()
+            if #names == 0 then
+                root:CreateTitle("Summon a pet to fill this list")
+                return
+            end
+            local seen = CharList(SEEN)
+            for _, name in ipairs(names) do
+                local icon = seen[name]
+                local text = type(icon) ~= "boolean" and icon and ("|T" .. icon .. ":16:16|t " .. name) or name
+                local entry = root:CreateCheckbox(text,
+                    function() return CharList(SELECTED)[name] == true end,
+                    function()
+                        local selected = CharList(SELECTED)
+                        selected[name] = not selected[name] or nil
+                        SetDropdownText(dd)
+                        UpdatePetBindings()
+                    end)
+                entry:AddInitializer(function(button)
+                    local del = MenuTemplates.AttachBasicButton(button, 16, 16)
+                    del:SetPoint("RIGHT", button, "RIGHT", -2, 0)
+                    del:SetNormalTexture(PASS_ICON .. "Up")
+                    del:SetPushedTexture(PASS_ICON .. "Down")
+                    del:SetHighlightTexture(PASS_ICON .. "Highlight", "ADD")
+                    del:SetScript("OnClick", function()
+                        CharList(SEEN)[name] = nil
+                        CharList(SELECTED)[name] = nil
+                        UpdatePetBindings()
+                        dd:GenerateMenu()   -- rebuilds the open list in place
+                        SetDropdownText(dd)
+                    end)
+                    MenuUtil.HookTooltipScripts(del, function(tip)
+                        GameTooltip_SetTitle(tip, "Remove from List")
+                        GameTooltip_AddNormalLine(tip, "Comes back the next time a pet with this ability is out.")
+                    end)
+                    local fs = button.fontString
+                    if fs then
+                        fs:SetPoint("RIGHT", del, "LEFT", -4, 0)
+                        return 20 + fs:GetUnboundedStringWidth() + 4 + 16 + 6, 20
+                    end
+                end)
+            end
+        end)
+        return dd
+    end,
+    update = function(dd, enabled)
+        SetDropdownText(dd)
+        dd:SetEnabled(enabled)
     end,
 })
 

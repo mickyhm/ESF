@@ -22,10 +22,11 @@ local ADDON, ESF = ...
 --       tooltip may be a function returning the text
 --   ESF:Dropdown{ key, label, default, options = { {value, text [, tooltip]}, ... } [, noRowTooltip, ...] }
 --   ESF:Slider{ key, label, default, min, max, step [, format, ...] }
---   ESF:Custom{ label [, tooltip, create, update, parent, enabledIf, noLabel] }
+--   ESF:Custom{ label [, tooltip, create, update, parent, enabledIf, noLabel, quietControl] }
 --       create(row) -> widget   builds the control once, placed in the control column of `row`
 --       noLabel: no label and no hover/tooltip; place the control at row.labelX (label indent)
 --       update(widget, enabled) refreshes it (value, enabled state)
+--       quietControl: no tooltip while the mouse is over the control
 -- onChange(value) runs once at load and after every change. perChar stores the value in
 -- ESFCharDB instead of ESFDB. parent (a spec) greys the row out with it; enabledIf() greys it out.
 
@@ -217,6 +218,7 @@ local function NewRow(content, spec)
     label:SetPoint("LEFT", LABEL_X, 0)
     label:SetPoint("RIGHT", row, "CENTER", CONTROL_X - 10, 0)
     label:SetJustifyH("LEFT")
+    label:SetSpacing(4)   -- labels that wrap to two lines
     label:SetText(spec.label or "")
     row.label = label
     -- where a checkbox sits in this row; tooltips are anchored to it
@@ -404,7 +406,9 @@ local function BuildCustom(content, spec)
     local row = NewRow(content, spec)
     row.labelX = LABEL_X
     local w = spec.create and spec.create(row)
-    if not spec.noLabel then AttachHover(row, spec, w or row, w and { w } or {}) end
+    if not spec.noLabel then
+        AttachHover(row, spec, w or row, w and { w } or {}, spec.quietControl and w and { w } or nil)
+    end
     return row, function(on)
         if w and spec.update then spec.update(w, on) end
         SetLabelEnabled(row, on)
