@@ -1,7 +1,11 @@
--- Group Browser tweaks for the Looking For Group window:
---   * a handle at the bottom edge to make the window taller on the browse tab
---     (the other tabs keep Blizzard's size; their layouts are built for it)
---   * compact entries: smaller fonts, icons and spacing, so more groups fit in the list
+-- Group Browser tweaks for the Looking For Group window: a handle at the bottom edge
+-- makes the window taller on the browse tab. The other tabs keep Blizzard's size;
+-- their layouts are built for it.
+--
+-- Nothing here may run Blizzard's list code from addon code (directly, or by reading
+-- a frame's position right after resizing it, which lays the list out on the spot):
+-- the rows set up that way are tainted, and in dungeons, raids and battlegrounds the
+-- group data is secret, so Blizzard's own row update fails on them.
 local ADDON, ESF = ...
 
 local GROUP_FINDER = "Blizzard_GroupFinder_VanillaStyle"
@@ -10,12 +14,13 @@ local MAX_HEIGHT = 1200
 local SCREEN_MARGIN = 4      -- keep this much space to the bottom of the screen
 
 local mod
-local enabled, handleOn, compactOn = false, false, false
+local enabled, handleOn = false, false
 local height = DEFAULT_HEIGHT
+local appliedHeight = DEFAULT_HEIGHT
 local hooked = false
 local grip
 
--- Tallest the window can get without leaving the screen.
+-- Tallest the window can get without leaving the screen. Only called before resizing.
 local function MaxHeight()
     local top = LFGParentFrame:GetTop()
     local max = MAX_HEIGHT
@@ -23,21 +28,30 @@ local function MaxHeight()
     return max
 end
 
+-- How far the top edge moves per pixel of extra height, by anchor point.
+local TOP_SHIFT = {
+    TOPLEFT = 0, TOP = 0, TOPRIGHT = 0,
+    LEFT = 0.5, CENTER = 0.5, RIGHT = 0.5,
+    BOTTOMLEFT = 1, BOTTOM = 1, BOTTOMRIGHT = 1,
+}
+
 local function Apply()
     local parent, browse = LFGParentFrame, LFGBrowseFrame
     if not parent or not browse then return end
     -- IsShown, not IsVisible: the browse tab stays selected while the window is closed
     local active = enabled and handleOn and browse:IsShown()
-    local h = active and math.min(math.max(height, DEFAULT_HEIGHT), MaxHeight()) or DEFAULT_HEIGHT
-    if math.abs(parent:GetHeight() - h) > 0.5 then
-        -- the window isn't always anchored at its top (moved with BlizzMove: CENTER), so
-        -- shift it back afterwards to keep the top edge in place
-        local top = parent:GetTop()
-        parent:SetHeight(h)
-        local newTop = parent:GetTop()
-        if top and newTop and math.abs(newTop - top) > 0.1 then
-            parent:AdjustPointsOffset(0, top - newTop)
+    local h = active and math.min(math.max(height, DEFAULT_HEIGHT), MAX_HEIGHT) or DEFAULT_HEIGHT
+    if math.abs(appliedHeight - h) > 0.5 then
+        -- The window isn't always anchored at its top (moved with BlizzMove: CENTER).
+        -- Work out from the anchor how far the top would move and shift it back,
+        -- without reading the new position.
+        local shift = 0
+        if parent:GetNumPoints() == 1 then
+            shift = (TOP_SHIFT[(parent:GetPoint(1))] or 0) * (h - appliedHeight)
         end
+        parent:SetHeight(h)
+        if shift ~= 0 then parent:AdjustPointsOffset(0, -shift) end
+        appliedHeight = h
     end
     if grip then grip:SetShown(active) end
     -- Blizzard's separator above the buttons sits 21 px above the list's bottom edge, so it
@@ -129,10 +143,10 @@ local function CreateGrip()
 
     grip:SetScript("OnMouseDown", function(self, button)
         if button ~= "LeftButton" then return end
-        self.startY, self.startH = CursorY(), LFGParentFrame:GetHeight()
+        self.startY, self.startH, self.maxH = CursorY(), appliedHeight, MaxHeight()
         self:SetScript("OnUpdate", function()
             local h = math.floor(self.startH + (self.startY - CursorY()) + 0.5)
-            height = math.min(math.max(h, DEFAULT_HEIGHT), MaxHeight())
+            height = math.min(math.max(h, DEFAULT_HEIGHT), self.maxH)
             Apply()
         end)
     end)
@@ -170,112 +184,6 @@ local function ExtendBackground()
     fill:SetPoint("BOTTOMRIGHT", inset, "BOTTOMRIGHT", -3, 3)
 end
 
-----------------------------------------------------------------------
--- Compact entries. Rows come from a pool and are reused, so every row is
--- laid out again after Blizzard's LFGBrowseSearchEntry_Init, compact or not.
--- Default values are LFGBrowseSearchEntryBaseTemplate's (Blizzard_LFGVanilla_Browse.xml).
-----------------------------------------------------------------------
-local COMPACT_ROW_H = 60
-local COMPACT = {
-    nameSize = 14, textSize = 11,
-    top = -9, lineGap = -1, lineH = 13,
-    leaderScale = 0.85,
-    roleIcon = 22, soloRole = 19, classIcon = 20, newPlayerIcon = 16, discordIcon = 14,
-}
-local DEFAULT = {
-    top = -14, lineGap = -2, lineH = 15,
-    leaderScale = 1,
-    roleIcon = 27, soloRole = 23, soloRoleStep = 24, classIcon = 24, newPlayerIcon = 20, discordIcon = 16,
-}
-
-local listHooked = false
-
-local function IsCompact() return enabled and compactOn end
-
--- Font size; nil restores the size the font string was created with.
-local function SetFontSize(fs, size)
-    if not fs then return end
-    fs.esfFont = fs.esfFont or { fs:GetFont() }
-    local file, original, flags = unpack(fs.esfFont)
-    fs:SetFont(file, size or original, flags)
-end
-
-local leaderW, leaderH
-local function LeaderIconSize()
-    if not leaderW then
-        local info = C_Texture.GetAtlasInfo("groupfinder-icon-leader")
-        leaderW, leaderH = info and info.width or 16, info and info.height or 16
-    end
-    return leaderW, leaderH
-end
-
-local function LayoutEntry(row)
-    local c = IsCompact()
-    local v = c and COMPACT or DEFAULT
-
-    local w, h = LeaderIconSize()
-    row.PartyIcon:SetSize(w * v.leaderScale, h * v.leaderScale)
-    row.PartyIcon:SetPoint("TOPLEFT", 8, v.top)
-
-    SetFontSize(row.Name, c and COMPACT.nameSize)
-    SetFontSize(row.Level, c and COMPACT.textSize)
-    SetFontSize(row.ActivityName, c and COMPACT.textSize)
-    row.ActivityName:SetHeight(v.lineH)
-    row.ActivityName:SetPoint("TOPLEFT", row.Name, "BOTTOMLEFT", 0, v.lineGap)
-    if row.PlaystyleLabel then
-        SetFontSize(row.PlaystyleLabel, c and COMPACT.textSize)
-        row.PlaystyleLabel:SetHeight(v.lineH)
-        row.PlaystyleLabel:SetPoint("TOPLEFT", row.ActivityName, "BOTTOMLEFT", 0, v.lineGap)
-    end
-
-    row.ClassIcon:SetSize(v.classIcon, v.classIcon)
-    row.NewPlayerFriendlyIcon:SetSize(v.newPlayerIcon, v.newPlayerIcon)
-    if row.DiscordIcon then row.DiscordIcon:SetSize(v.discordIcon, v.discordIcon) end
-
-    local data = row.DataDisplay
-    if data and data.Enumerate and data.Enumerate.Icons then
-        local icons = data.Enumerate.Icons
-        for i, icon in ipairs(icons) do
-            icon:SetSize(v.roleIcon, v.roleIcon)
-            if i > 1 then icon:SetPoint("CENTER", icons[i - 1], "CENTER", -v.roleIcon, 0) end
-        end
-    end
-    if data and data.Solo and data.Solo.Roles then
-        SetFontSize(data.Solo.RolesText, c and COMPACT.textSize)
-        local roles = data.Solo.Roles
-        local step = c and (COMPACT.soloRole + 1) or DEFAULT.soloRoleStep
-        for i, role in ipairs(roles) do
-            role:SetSize(v.soloRole, v.soloRole)
-            if i > 1 then role:SetPoint("CENTER", roles[i - 1], "CENTER", step, 0) end
-        end
-    end
-end
-
--- Row heights. Headers and everything else keep their template's height.
-local function ElementExtent(_, elementData)
-    local view = LFGBrowseFrame.ScrollBox:GetView()
-    local data = elementData.data or (elementData.GetData and elementData:GetData())
-    if IsCompact() and data and data.category and not data.dividerType then
-        return COMPACT_ROW_H
-    end
-    return view:GetTemplateExtentFromElementData(elementData)
-end
-
-local function RefreshList()
-    if not hooked then return end
-    local box = LFGBrowseFrame.ScrollBox
-    if not listHooked then
-        if not IsCompact() then return end   -- leave Blizzard's list alone until first used
-        listHooked = true
-        hooksecurefunc("LFGBrowseSearchEntry_Init", LayoutEntry)
-        -- set once: setting it drops the cached row heights, and until they are recalculated
-        -- every row counts as 0 tall, which breaks the list's scroll range
-        box:GetView():SetElementExtentCalculator(ElementExtent)
-    end
-    box:FullUpdate(ScrollBoxConstants.UpdateImmediately)   -- recalculates the row heights
-    if LFGBrowseFrame:IsVisible() then LFGBrowseFrame:UpdateResults() end
-end
-
 local function Hook()
     if hooked or not LFGParentFrame or not LFGBrowseFrame then return end
     hooked = true
@@ -283,10 +191,7 @@ local function Hook()
     ExtendBackground()
     LFGBrowseFrame:HookScript("OnShow", Apply)
     LFGBrowseFrame:HookScript("OnHide", Apply)
-    -- the window is placed by the UI panel manager after OnShow; clamp again once it's there
-    LFGParentFrame:HookScript("OnShow", function() C_Timer.After(0, Apply) end)
     Apply()
-    RefreshList()
 end
 
 local IsLoaded = C_AddOns and C_AddOns.IsAddOnLoaded or IsAddOnLoaded
@@ -315,18 +220,9 @@ mod = ESF:Module({
 
 ESF:Checkbox({
     key = "lfgResizeHandle", label = "Expand Handle", default = true,
-    tooltip = "Drag the handle at the bottom of the Group Browser to make the window taller.",
+    tooltip = "Drag the handle at the bottom of the group browser to make the window taller.",
     onChange = function(on)
         handleOn = on
         Apply()
-    end,
-})
-
-ESF:Checkbox({
-    key = "lfgCompactEntries", label = "Compact Entries", default = true,
-    tooltip = "Smaller text, icons and spacing, so more groups fit in the list.",
-    onChange = function(on)
-        compactOn = on
-        RefreshList()
     end,
 })
