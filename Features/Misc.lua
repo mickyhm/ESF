@@ -1,5 +1,6 @@
 -- Small tweaks that don't need their own module:
--- bars that only show on mouseover, and pet keybinds that toggle autocast.
+-- bars that only show on mouseover, pet keybinds that toggle autocast,
+-- and hiding quest areas on the minimap.
 local ADDON, ESF = ...
 
 local TICK = 0.05          -- seconds between mouse checks
@@ -293,6 +294,30 @@ petOwner:SetScript("OnEvent", function(_, event)
 end)
 
 ----------------------------------------------------------------------
+-- Minimap quest areas
+----------------------------------------------------------------------
+-- The selected quest's area is drawn separately and can't be hidden.
+-- The minimap tooltip is secret, so its quest lines can't be removed.
+local AREA_DEFAULT_ALPHA = 128   -- 0 to 255, there is no getter
+local AREA_HIDDEN_ALPHA = 1
+
+local areasOff = false      -- setting and module both on
+local areasHidden = false   -- what we applied last
+
+local function ApplyAreas()
+    if not (areasOff or areasHidden) then return end   -- untouched until first hidden
+    local a = areasOff and AREA_HIDDEN_ALPHA or AREA_DEFAULT_ALPHA
+    Minimap:SetQuestBlobInsideAlpha(a)
+    Minimap:SetQuestBlobOutsideAlpha(a)
+    Minimap:SetQuestBlobRingAlpha(a)
+    areasHidden = areasOff
+end
+
+local areaWatch = CreateFrame("Frame")
+areaWatch:RegisterEvent("PLAYER_ENTERING_WORLD")
+areaWatch:SetScript("OnEvent", ApplyAreas)
+
+----------------------------------------------------------------------
 -- Settings
 ----------------------------------------------------------------------
 mod = ESF:Module({
@@ -327,5 +352,16 @@ ESF:Checkbox({
     onChange = function(on)
         petToggle = on
         UpdatePetBindings()
+    end,
+})
+
+ESF:Section("Minimap")
+
+ESF:Checkbox({
+    key = "miscHideQuestAreas", label = "Hide Unselected Quest Areas", default = false,
+    tooltip = "Hides the blue quest areas on the minimap. The selected quest's area always stays visible.",
+    onChange = function(on)
+        areasOff = on and mod:IsOn() or false
+        ApplyAreas()
     end,
 })
