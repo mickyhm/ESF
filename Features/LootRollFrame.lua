@@ -989,8 +989,8 @@ end)
 
 mod = ESF:Module({
     name = NAME, key = "lootRollFrame",
-    desc = "Move and resize the loot roll windows in Edit Mode",
-    note = "Move and resize the Need/Greed/Pass roll windows in Edit Mode.",
+    desc = "Move and resize the loot roll window in edit mode",
+    note = "Move and resize the Need/Greed/Pass roll window in edit mode.",
     onChange = function(on)
         if InEditMode() then
             if on then ShowPreview() else HidePreview() end

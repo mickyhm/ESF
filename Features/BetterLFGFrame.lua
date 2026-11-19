@@ -305,8 +305,8 @@ end
 
 mod = ESF:Module({
     name = "Better LFG Frame", key = "betterLFGFrame",
-    desc = "Allows more entries to be shown in the Group Browser",
-    note = "Allows more entries to be shown at once in the Group Browser.",
+    desc = "Allows more entries to be shown in the group browser",
+    note = "Allows more entries to be shown at once in the group browser.",
     onChange = function(on)
         enabled = on
         height = ESFDB.lfgFrameHeight or DEFAULT_HEIGHT

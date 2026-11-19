@@ -561,22 +561,26 @@ end
 -- (click = open the module's page, checkbox = enable/disable)
 ----------------------------------------------------------------------
 local TILE_COLUMNS = 2
+local TILE_SCALE = 0.8       -- whole tile, sizes below are before scaling
+local TILE_CHECK_SIZE = 30   -- checkbox size on screen, not scaled with the tile
 local TILE_H = 92
 local TILE_GAP = 14
 local TILE_TOP = 86          -- first tile row, from the top of the page
 local TILE_ICON = 56
 local TILE_PAD = 16          -- inner padding (icon left, text top)
-local TILE_TEXT_RIGHT = 44   -- title and description end this far from the right edge (checkbox column)
+local TILE_DESC_SIZE = 11     -- description font size on screen
+local TILE_TEXT_RIGHT = 50   -- title and description end this far from the right edge (checkbox column)
 local PLACEHOLDER_ICON = "Interface\\Icons\\INV_Misc_Bag_08"
 
 local function BuildTile(parent, m)
     local tile = CreateFrame("Button", nil, parent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    tile:SetScale(TILE_SCALE)
     tile:SetHeight(TILE_H)
     tile:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        edgeSize = 14,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        edgeSize = 14 / TILE_SCALE,   -- same border on screen at any tile scale
+        insets = { left = 4 / TILE_SCALE, right = 4 / TILE_SCALE, top = 4 / TILE_SCALE, bottom = 4 / TILE_SCALE },
     })
 
     local icon = tile:CreateTexture(nil, "ARTWORK")
@@ -601,6 +605,13 @@ local function BuildTile(parent, m)
     end
 
     local title = tile:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    -- the caption keeps its full font size on screen, only the rest of the tile is scaled
+    local function SetTitleFont(fontObject)
+        title:SetFontObject(fontObject)
+        local file, size, flags = fontObject:GetFont()
+        title:SetFont(file, size / TILE_SCALE, flags)
+    end
+    SetTitleFont(GameFontNormalLarge)
     title:SetPoint("TOPLEFT", TILE_PAD + TILE_ICON + 14, -TILE_PAD)
     title:SetPoint("RIGHT", -TILE_TEXT_RIGHT, 0)
     title:SetJustifyH("LEFT")
@@ -608,6 +619,10 @@ local function BuildTile(parent, m)
     title:SetText(m.name)
 
     local desc = tile:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    do
+        local file, _, flags = desc:GetFont()
+        desc:SetFont(file, TILE_DESC_SIZE / TILE_SCALE, flags)
+    end
     desc:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -5)
     desc:SetPoint("RIGHT", -TILE_TEXT_RIGHT, 0)   -- same right edge as the title, clear of the checkbox
     desc:SetJustifyH("LEFT")
@@ -617,7 +632,9 @@ local function BuildTile(parent, m)
 
     -- enable/disable: the same checkbox as on the module pages, centered on the title line
     local cb = NewCheckButton(tile)
-    cb:SetPoint("RIGHT", tile, "TOPRIGHT", -8, -TILE_PAD - title:GetStringHeight() / 2)
+    local cbScale = TILE_CHECK_SIZE / 30 / TILE_SCALE
+    cb:SetScale(cbScale)
+    cb:SetPoint("RIGHT", tile, "TOPRIGHT", -8 / cbScale, (-TILE_PAD - title:GetStringHeight() / 2) / cbScale)
     cb:SetFrameLevel(tile:GetFrameLevel() + 2)
     if cb.SetMotionScriptsWhileDisabled then cb:SetMotionScriptsWhileDisabled(true) end
     local function ShowCheckTip(self)
@@ -656,10 +673,10 @@ local function BuildTile(parent, m)
             banner:SetAlpha(on and 1 or 0.5)
             bannerText:SetAlpha(on and 1 or 0.5)
         end
-        title:SetFontObject(on and GameFontNormalLarge or GameFontDisableLarge)
+        SetTitleFont(on and GameFontNormalLarge or GameFontDisableLarge)
         if on then desc:SetTextColor(0.85, 0.85, 0.85) else desc:SetTextColor(0.4, 0.4, 0.4) end
         tile:SetBackdropColor(on and 0.12 or 0.05, on and 0.10 or 0.05, on and 0.05 or 0.05, on and 0.9 or 0.6)
-        if on then tile:SetBackdropBorderColor(1, 0.82, 0) else tile:SetBackdropBorderColor(0.35, 0.35, 0.35) end
+        if on then tile:SetBackdropBorderColor(0.8, 0.66, 0) else tile:SetBackdropBorderColor(0.35, 0.35, 0.35) end
         cb:SetChecked(on)
         cb:SetEnabled(not m.unavailable)
         cb:GetNormalTexture():SetDesaturated(m.unavailable and true or false)
@@ -704,12 +721,16 @@ local function BuildMainPage()
     local function Layout()
         local width = panel:GetWidth() - 20 - 18
         if width <= 0 then return end
-        local w = (width - (TILE_COLUMNS - 1) * TILE_GAP) / TILE_COLUMNS
+        -- whole pixels, so every column gets the same width after the scale
+        local gap = math.floor(TILE_GAP * TILE_SCALE + 0.5)
+        local w = math.floor((width - (TILE_COLUMNS - 1) * gap) / TILE_COLUMNS)
         for i, tile in ipairs(tiles) do
             local col, row = (i - 1) % TILE_COLUMNS, math.floor((i - 1) / TILE_COLUMNS)
+            local x = 10 + col * (w + gap)
+            local y = -TILE_TOP - row * (math.floor(TILE_H * TILE_SCALE + 0.5) + gap)
             tile:ClearAllPoints()
-            tile:SetWidth(w)
-            tile:SetPoint("TOPLEFT", 10 + col * (w + TILE_GAP), -TILE_TOP - row * (TILE_H + TILE_GAP))
+            tile:SetWidth(w / TILE_SCALE)
+            tile:SetPoint("TOPLEFT", x / TILE_SCALE, y / TILE_SCALE)
         end
     end
     panel:SetScript("OnSizeChanged", Layout)
@@ -756,7 +777,7 @@ end)
 -- Sub-commands: ESF.commands.name = function(rest) ... end  ->  /es name rest
 ESF.commands = {}
 
-BINDING_HEADER_EXTRASAUSAGE = "ExtraSausage"   -- heading of our entries in the keybindings
+BINDING_CATEGORY_EXTRASAUSAGE = "ExtraSausage"   -- own section in the keybindings (Bindings.xml)
 
 SLASH_EXTRASAUSAGE1 = "/es"
 SlashCmdList.EXTRASAUSAGE = function(msg)

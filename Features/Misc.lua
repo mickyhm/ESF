@@ -6,6 +6,7 @@ local TICK = 0.05          -- seconds between mouse checks
 local HIDE_DELAY = 0.4     -- seconds a bar stays visible after the mouse left
 local FADE_TIME = 1        -- seconds the fade out takes after that
 local TOUCH_GAP = 8        -- bars closer than this count as touching (UIParent units)
+local EDGE_GAP = 3         -- bars closer than this to a screen edge are hoverable up to and past it
 
 local mod
 
@@ -16,9 +17,9 @@ local mod
 -- and show together. Status bar containers run Blizzard's fade animations
 -- on their own alpha, so for those only the contents are faded.
 local elements = {
-    { key = "miscHideBags", frame = function() return BagsBar end,
+    { key = "miscHideBags", frame = function() return BagsBar end, art = true,
       managed = { bartender = "BagBar", dominos = "Dominos" } },
-    { key = "miscHideMicroMenu", frame = function() return MicroMenuContainer end,
+    { key = "miscHideMicroMenu", frame = function() return MicroMenuContainer end, art = true,
       managed = { bartender = "MicroMenu", dominos = "Dominos" } },
     { key = "miscHideStatusBars", frame = function() return MainStatusTrackingBarContainer end, contents = true,
       managed = { bartender = { "StatusTrackingBar", "XPBar" }, dominos = "Dominos_Progress" } },
@@ -71,13 +72,44 @@ local function SetElementAlpha(e, alpha)
     end
 end
 
--- Screen rect in UIParent units, or nil if the bar isn't shown.
-local function Rect(f)
-    if not (f and f:IsVisible()) then return end
+-- Bounds in UIParent units. With depth > 0 this includes visible child frames
+-- and textures, since the bag bar and Micro Menu draw their border art
+-- outside their own rect.
+local function Bounds(f, depth, box)
     local l, b, w, h = f:GetRect()
-    if not l then return end
-    local s = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    return l * s, b * s, (l + w) * s, (b + h) * s
+    if l then
+        local s = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        l, b, w, h = l * s, b * s, w * s, h * s
+        if not box then
+            box = { l, b, l + w, b + h }
+        else
+            box[1], box[2] = math.min(box[1], l), math.min(box[2], b)
+            box[3], box[4] = math.max(box[3], l + w), math.max(box[4], b + h)
+        end
+    end
+    if depth > 0 then
+        for _, region in ipairs({ f:GetRegions() }) do
+            if region:IsVisible() then
+                local rl, rb, rw, rh = region:GetRect()
+                if rl and box then
+                    local s = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                    box[1], box[2] = math.min(box[1], rl * s), math.min(box[2], rb * s)
+                    box[3], box[4] = math.max(box[3], (rl + rw) * s), math.max(box[4], (rb + rh) * s)
+                end
+            end
+        end
+        for _, child in ipairs({ f:GetChildren() }) do
+            if child:IsVisible() and child ~= f.Selection then box = Bounds(child, depth - 1, box) end
+        end
+    end
+    return box
+end
+
+local function Rect(e)
+    local f = e.frame()
+    if not (f and f:IsVisible()) then return end
+    local box = Bounds(f, e.art and 2 or 0)
+    if box then return box[1], box[2], box[3], box[4] end
 end
 
 local function Touch(a, b)
@@ -98,7 +130,7 @@ local function Tick()
     -- current rects; hidden bars take no part in grouping
     local list = {}
     for _, e in ipairs(active) do
-        local l, b, r, t = Rect(e.frame())
+        local l, b, r, t = Rect(e)
         if l then table.insert(list, { e = e, l, b, r, t }) end
     end
 
@@ -115,9 +147,16 @@ local function Tick()
         end
     end
 
+    -- Edit Mode tends to leave a pixel or so between a bar and the screen edge,
+    -- so a cursor pushed against that edge would miss the bar.
+    local w, h = UIParent:GetWidth(), UIParent:GetHeight()
     local hovered = {}
     for i, r in ipairs(list) do
-        if x >= r[1] and x <= r[3] and y >= r[2] and y <= r[4] then hovered[Find(i)] = true end
+        local l = r[1] <= EDGE_GAP and -math.huge or r[1]
+        local b = r[2] <= EDGE_GAP and -math.huge or r[2]
+        local rt = r[3] >= w - EDGE_GAP and math.huge or r[3]
+        local t = r[4] >= h - EDGE_GAP and math.huge or r[4]
+        if x >= l and x <= rt and y >= b and y <= t then hovered[Find(i)] = true end
     end
     for i, r in ipairs(list) do
         if hovered[Find(i)] then lastHover[r.e] = now end
