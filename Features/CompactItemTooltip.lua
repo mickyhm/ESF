@@ -60,8 +60,8 @@ local SCHOOLS = { Arcane = true, Fire = true, Frost = true, Holy = true, Nature 
 local RULES = {
     { "^%+(%d+) Attack Power%.$", function(v) return { { "attackPower", v } } end },
     { "^%+(%d+) ranged Attack Power%.$", function(v) return { { "rangedAttackPower", v } } end },
-    { "^Improves your chance to hit by (%d+)%%%.$", function(v) return { { "hit", v } } end },
-    { "^Improves your chance to get a critical strike by (%d+)%%%.$", function(v) return { { "crit", v } } end },
+    { "^Improves your chance to hit by (%d+%.?%d*)%%%.$", function(v) return { { "hit", v } } end },
+    { "^Improves your chance to get a critical strike by (%d+%.?%d*)%%%.$", function(v) return { { "crit", v } } end },
     { "^Increases damage and healing done by magical spells and effects by up to (%d+)%.$",
         function(v) return { { "spellDamage", v }, { "spellHealing", v } } end },
     { "^Increases healing done by up to (%d+) and damage done by up to (%d+) for all magical spells and effects%.$",
@@ -71,14 +71,14 @@ local RULES = {
     { "^Increases damage done by (%a+) spells and effects by up to (%d+)%.$",
         function(school, v) if SCHOOLS[school] then return { { "spellDamage", v, school } } end end },
     { "^Increases healing done by spells and effects by up to (%d+)%.$", function(v) return { { "spellHealing", v } } end },
-    { "^Improves your chance to hit with spells by (%d+)%%%.$", function(v) return { { "spellHit", v } } end },
-    { "^Improves your chance to get a critical strike with spells by (%d+)%%%.$", function(v) return { { "spellCrit", v } } end },
+    { "^Improves your chance to hit with spells by (%d+%.?%d*)%%%.$", function(v) return { { "spellHit", v } } end },
+    { "^Improves your chance to get a critical strike with spells by (%d+%.?%d*)%%%.$", function(v) return { { "spellCrit", v } } end },
     -- capitalization differs between items, e.g. "mana per 5 sec." and "Mana per 5 Sec."
     { "^Restores (%d+) [Mm]ana [Pp]er 5 [Ss]ec%.$", function(v) return { { "mp5", v } } end },
     { "^Increased Defense %+(%d+)%.$", function(v) return { { "defense", v } } end },
-    { "^Increases your chance to dodge an attack by (%d+)%%%.$", function(v) return { { "dodge", v } } end },
-    { "^Increases your chance to parry an attack by (%d+)%%%.$", function(v) return { { "parry", v } } end },
-    { "^Increases your chance to block attacks with a shield by (%d+)%%%.$", function(v) return { { "blockChance", v } } end },
+    { "^Increases your chance to dodge an attack by (%d+%.?%d*)%%%.$", function(v) return { { "dodge", v } } end },
+    { "^Increases your chance to parry an attack by (%d+%.?%d*)%%%.$", function(v) return { { "parry", v } } end },
+    { "^Increases your chance to block attacks with a shield by (%d+%.?%d*)%%%.$", function(v) return { { "blockChance", v } } end },
     { "^Increases the block value of your shield by (%d+)%.$", function(v) return { { "blockValue", v } } end },
 }
 
